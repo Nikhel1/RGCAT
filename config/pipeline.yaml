@@ -1,0 +1,99 @@
+# RG-CAT Pipeline Configuration
+# ================================
+# All environment-specific paths, skip lists, and resource specs live here.
+# Override individual values with environment variables or CLI flags.
+
+# ---------------------------------------------------------------------------
+# Paths  (relative to the repo root, or absolute when mounted in Docker)
+# ---------------------------------------------------------------------------
+paths:
+  # Directory containing EMU FITS tile images
+  emu_images_dir: "data/EMUcatalog_main/images"
+
+  # Directory containing WISE mosaics
+  wise_images_dir: "data/EMUcatalog_main/images_wise"
+
+  # Directory containing selavy CSV catalogs
+  emu_catalogs_dir: "data/EMUcatalog_main/catalogs"
+
+  # Working area: per-SBid cutouts and preprocessed files
+  all_sbs_dir: "data/all_SBs"
+
+  # COCO annotation JSONs produced by create_fake_json_All_fits.py
+  annotations_dir: "data/annotations"
+
+  # Mask PNGs used as reference for fake annotation generation
+  mask_dir: "data/Allmask"
+
+  # Gal-DINO inference outputs  (results0_all_<SBid>.json, checkpoints)
+  output_dir: "outputs/CatV1/v1_without_angle"
+
+  # Trained Gal-DINO model checkpoint
+  dino_checkpoint: "outputs/CatV1/v1_without_angle/checkpoint.pth"
+
+  # Log files
+  log_dir: "logs"
+
+# ---------------------------------------------------------------------------
+# Skip Lists
+# ---------------------------------------------------------------------------
+skip:
+  # SBids with WISE mosaic issues (CRVAL mismatch or empty all_SBs dir).
+  # Add a comment per entry explaining the reason so future maintainers know.
+  bad_tiles:
+    - "70511"   # WISE CRVAL mismatch
+    - "70463"   # WISE CRVAL mismatch
+    - "72044"   # empty WISE mosaic
+    - "72176"   # empty WISE mosaic
+    - "66742"   # WISE CRVAL mismatch
+    - "70395"   # WISE CRVAL mismatch
+    - "70399"   # WISE CRVAL mismatch
+    - "67157"   # WISE CRVAL mismatch
+    - "73385"   # All_Images_8arcmV1_wise empty
+    - "73339"   # WISE mosaic issue
+    - "69699"   # WISE mosaic issue
+    - "73778"   # All_Images_8arcmV1_wise empty
+    - "70504"   # WISE mosaic issue
+    - "70512"   # WISE mosaic issue
+    - "71680"   # WISE CRVAL mismatch
+    - "70398"   # WISE CRVAL mismatch
+    - "71674"   # WISE CRVAL mismatch
+
+  # SBids skipped for value-added catalog step only
+  skip_value_added:
+    - "50428"   # known issue with value-added catalog generation
+
+# ---------------------------------------------------------------------------
+# Processing Parameters
+# ---------------------------------------------------------------------------
+processing:
+  cutout_size: 240          # pixels (square)
+  angular_size_arcmin: 8.0  # arcminutes
+  epmask: 5                 # min island pixel count for EMU segmentation
+  wpmask: 5                 # min island pixel count for WISE segmentation
+  sigma: 3.0                # detection threshold in sigma
+
+# ---------------------------------------------------------------------------
+# Gal-DINO Model
+# ---------------------------------------------------------------------------
+galdino:
+  config: "galdino/config/DINO/DINO_4scale.py"
+  nproc_per_node: 1
+  master_port: "29501"
+
+# ---------------------------------------------------------------------------
+# SLURM  (used by catalog_script.py when running on a cluster)
+# ---------------------------------------------------------------------------
+slurm:
+  account: "OD-231147"
+  mail_user: "nikhel.gupta@csiro.au"
+  mail_type: "ALL"
+  poll_interval_seconds: 30   # how often to poll squeue for job completion
+
+  inference:
+    nodes: 1
+    ntasks_per_node: 1
+    cpus_per_task: 4
+    mem: "160gb"
+    time: "02:30:00"
+    gres: "gpu:1"

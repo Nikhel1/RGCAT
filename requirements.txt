@@ -1,0 +1,46 @@
+# RG-CAT pipeline dependencies
+# Pin to minor versions; patch-level updates are generally safe.
+
+# Core astronomy stack
+astropy==6.1.0
+astroquery==0.4.7
+reproject==0.13.1
+astropink==0.3.2         # island segmentation + minmax helpers
+
+# Image / data processing
+numpy==1.26.4
+scipy==1.13.1
+scikit-image==0.24.0
+Pillow==10.4.0
+pandas==2.2.2
+matplotlib==3.9.1
+tqdm==4.66.5
+regions==0.9
+
+# FITS / VOTable
+# (covered by astropy above)
+
+# COCO tools (annotation format)
+pycocotools==2.0.8
+
+# Shapely (polygon ops in create_fake_json)
+shapely==2.0.5
+
+# PyYAML (pipeline config loading)
+PyYAML==6.0.2
+
+# Splinecalibration extras
+# (no additional deps beyond numpy/scipy)
+
+# ---- GalDINO framework ----
+# Install these separately via the galdino/requirements.txt
+# or the conda environment; listed here for documentation only.
+# torch>=2.1.0
+# torchvision>=0.16.0
+# timm>=0.9.0
+# cython
+# submitit
+# addict
+# yapf
+# termcolor
+# git+https://github.com/cocodataset/panopticapi.git#egg=panopticapi

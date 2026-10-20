@@ -1,0 +1,71 @@
+# =============================================================================
+# RGCAT .gitignore
+# =============================================================================
+
+# --- Data (too large for git; mount at runtime or use DVC/S3) ---------------
+data/
+outputs/
+logs/
+
+# Specific large files that might slip in
+*.fits
+*.pth
+*.pkl
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# --- Jupyter -----------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# --- Editor / OS -------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Docker ------------------------------------------------------------------
+.dockerignore
+
+# --- Secrets / credentials ---------------------------------------------------
+.env
+*.pem
+*.key
+credentials.json
+
+# --- SLURM temp files --------------------------------------------------------
+temp_slurm_script.sh
+slurm-*.out
+*.sbatch.tmp
+
+# --- Build artefacts from CUDA ops compilation -------------------------------
+galdino/models/dino/ops/build/
+galdino/models/dino/ops/__pycache__/
+
+# --- splinecalibration cache -------------------------------------------------
+splinecalibration/__pycache__/
+splinecalibration/**/__pycache__/
