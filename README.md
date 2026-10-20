@@ -165,18 +165,28 @@ Key sections:
 If you use this pipeline or the Gal-DINO model, please cite:
 
 ```bibtex
-@misc{rgcat2024,
-  author = {Gupta, Nikhel and others},
-  title  = {RGCAT: Radio Galaxy Catalogue Pipeline},
-  year   = {2024},
-  url    = {https://github.com/<your-org>/RGCAT}
+@ARTICLE{2024PASA...41...27G,
+       author = {{Gupta}, Nikhel and {Norris}, Ray P. and {Hayder}, Zeeshan and {Huynh}, Minh and {Petersson}, Lars and {Rosalind Wang}, X. and {Hopkins}, Andrew M. and {Andernach}, Heinz and {Gordon}, Yjan and {Riggi}, Simone and {Yew}, Miranda and {Crawford}, Evan J. and {Koribalski}, B{\"a}rbel and {Filipovi{\'c}}, Miroslav D. and {Kapi{\'n}ska}, Anna D. and {Shabala}, Stanislav and {Vernstrom}, Tessa and {Marvil}, Joshua R.},
+        title = "{RG-CAT: Detection pipeline and catalogue of radio galaxies in the EMU pilot survey}",
+      journal = {\pasa},
+     keywords = {Galaxies: active, galaxies: peculiar, radio continuum: galaxies, Galaxy: evolution, methods: data analysis, Astrophysics - Astrophysics of Galaxies, Astrophysics - Cosmology and Nongalactic Astrophysics, Astrophysics - Instrumentation and Methods for Astrophysics, Computer Science - Computer Vision and Pattern Recognition, Computer Science - Machine Learning},
+         year = 2024,
+        month = apr,
+       volume = {41},
+          eid = {e027},
+        pages = {e027},
+          doi = {10.1017/pasa.2024.25},
+archivePrefix = {arXiv},
+       eprint = {2403.14235},
+ primaryClass = {astro-ph.GA},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2024PASA...41...27G},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
 }
 ```
 
 The pipeline builds on:
-- [DINO (Zhang et al., 2022)](https://arxiv.org/abs/2203.03605) — detection transformer backbone
+- [Gal-DINO model (Gupta et al., 2024)](https://arxiv.org/abs/2312.00306) — multi-modal detection transformer backbone
 - [EMU Survey](https://www.atnf.csiro.au/projects/emu/) — Evolutionary Map of the Universe
-- [CatWISE2020](https://catwise.github.io/) — infrared counterpart matching
 
 ---
 
