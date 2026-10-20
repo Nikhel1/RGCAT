@@ -1,9 +1,9 @@
-# RGCAT — Radio Galaxy Catalogue Pipeline
+# RG-CAT — Radio Galaxy Catalogue Pipeline
 
 An automated pipeline for generating a value-added catalogue of radio galaxies
 from [EMU](https://www.atnf.csiro.au/projects/emu/) survey tiles.  
-The pipeline uses **Gal-DINO**, a heavily customised detection transformer
-(originally based on [DINO: DETR with Improved DeNoising Anchor Boxes](https://arxiv.org/abs/2203.03605))
+The pipeline uses [**Gal-DINO**](https://arxiv.org/abs/2403.14235), a heavily customised multi-modal detection transformer 
+(originally based on [DINO](https://arxiv.org/abs/2203.03605))
 fine-tuned on radio morphology classes:
 FR-I, FR-II, FR-X, Relaxed (R), Complex (C), and Single (S).
 
