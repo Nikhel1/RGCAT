@@ -59,20 +59,20 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./outputs/CatV1/v1_without_angle/",
-        help="Base directory for Gal-DINO outputs",
+        default="outputs/CatV1",
+        help="Base directory for Gal-DINO outputs (default: outputs/CatV1)",
     )
     parser.add_argument(
         "--wise_catalogs_dir",
         type=str,
-        default="./data/EMUcatalog_main/catalogs_wise/",
-        help="Directory containing CatWISE CSV files",
+        default="data/catalogs_wise",
+        help="Directory containing CatWISE CSV files (default: data/catalogs_wise)",
     )
     parser.add_argument(
         "--desi_catalogs_dir",
         type=str,
-        default="./data/EMUcatalog_main/catalogs_desi/",
-        help="Directory containing DESI DR10 CSV files",
+        default="data/catalogs_desi",
+        help="Directory containing DESI DR10 CSV files (default: data/catalogs_desi)",
     )
     parser.add_argument(
         "--cat_version",

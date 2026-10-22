@@ -218,11 +218,8 @@ def process_tile(
 
     # --- WISE mosaic existence check ----------------------------------------
     emu_tile_path = os.path.join(paths["emu_images_dir"], tile_filename)
-    wise_tile_path = (
-        emu_tile_path
-        .replace(".fits", "_wise_mosaic.fits")
-        .replace("/images/", "/images_wise/")
-    )
+    wise_basename = tile_filename.replace(".fits", "_wise_mosaic.fits")
+    wise_tile_path = os.path.join(paths["wise_images_dir"], wise_basename)
     if not os.path.exists(wise_tile_path):
         logger.info(
             "[SB%s] WISE mosaic not found (%s) — skipping",
@@ -248,7 +245,10 @@ def process_tile(
                 (
                     f"python {pipeline_dir}/Download_allSources.py"
                     f" --Image_SBid {tile_filename}"
-                    f" --images_base_dir {paths['emu_images_dir']}"
+                    f" --emu_images_dir {paths['emu_images_dir']}"
+                    f" --wise_images_dir {paths['wise_images_dir']}"
+                    f" --emu_catalogs_dir {paths['emu_catalogs_dir']}"
+                    f" --all_sbs_dir {all_sbs_dir}"
                     f" --cutout_size {proc['cutout_size']}"
                     f" --angular_size {proc['angular_size_arcmin']}"
                 ),
@@ -266,7 +266,10 @@ def process_tile(
                 (
                     f"python {pipeline_dir}/Preprocess_allSources.py"
                     f" --Image_SBid {tile_filename}"
-                    f" --images_base_dir {paths['emu_images_dir']}"
+                    f" --emu_images_dir {paths['emu_images_dir']}"
+                    f" --emu_catalogs_dir {paths['emu_catalogs_dir']}"
+                    f" --all_sbs_dir {all_sbs_dir}"
+                    f" --cutout_size {proc['cutout_size']}"
                     f" --epmask {proc['epmask']}"
                     f" --wpmask {proc['wpmask']}"
                     f" --sigma {proc['sigma']}"
@@ -285,7 +288,8 @@ def process_tile(
                 (
                     f"python {pipeline_dir}/create_fake_json_All_fits.py"
                     f" --Image_SBid {tile_filename}"
-                    f" --images_base_dir {paths['emu_images_dir']}"
+                    f" --all_sbs_dir {all_sbs_dir}"
+                    f" --annotations_dir {annotations_dir}"
                     f" --mask_path {paths['mask_dir']}"
                 ),
                 sbid, "create_fake_json_All_fits",
@@ -336,6 +340,8 @@ def process_tile(
                     f"python {pipeline_dir}/get_consol_cat.py"
                     f" --Image_SBid {tile_filename}"
                     f" --emu_images_dir {paths['emu_images_dir']}"
+                    f" --emu_catalogs_dir {paths['emu_catalogs_dir']}"
+                    f" --all_sbs_dir {all_sbs_dir}"
                     f" --annotations_dir {annotations_dir}"
                     f" --output_dir {output_dir}"
                 ),
@@ -364,10 +370,8 @@ def process_tile(
                     f"python {pipeline_dir}/value_added_cat.py"
                     f" --SBid {sbid}"
                     f" --output_dir {output_dir}"
-                    f" --wise_catalogs_dir"
-                    f" {paths.get('wise_catalogs_dir', 'data/EMUcatalog_main/catalogs_wise')}"
-                    f" --desi_catalogs_dir"
-                    f" {paths.get('desi_catalogs_dir', 'data/EMUcatalog_main/catalogs_desi')}"
+                    f" --wise_catalogs_dir {paths['wise_catalogs_dir']}"
+                    f" --desi_catalogs_dir {paths['desi_catalogs_dir']}"
                 ),
                 sbid, "value_added_cat",
             )

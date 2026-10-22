@@ -16,6 +16,12 @@ paths:
   # Directory containing selavy CSV catalogs
   emu_catalogs_dir: "data/catalogs"
 
+  # Directory containing CatWISE CSV files (for value-added catalogue)
+  wise_catalogs_dir: "data/catalogs_wise"
+
+  # Directory containing DESI DR10 CSV files (for value-added catalogue)
+  desi_catalogs_dir: "data/catalogs_desi"
+
   # Working area: per-SBid cutouts and preprocessed files
   all_sbs_dir: "data/all_SBs"
 

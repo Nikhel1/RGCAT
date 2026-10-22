@@ -103,20 +103,32 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--emu_images_dir",
         type=str,
-        default="./data/EMUcatalog_main/images",
-        help="Directory containing EMU FITS tiles",
+        default="data/images",
+        help="Directory containing EMU FITS tiles (default: data/images)",
+    )
+    parser.add_argument(
+        "--emu_catalogs_dir",
+        type=str,
+        default="data/catalogs",
+        help="Directory containing selavy CSV catalogs (default: data/catalogs)",
+    )
+    parser.add_argument(
+        "--all_sbs_dir",
+        type=str,
+        default="data/all_SBs",
+        help="Working area for per-SBid cutouts (default: data/all_SBs)",
     )
     parser.add_argument(
         "--annotations_dir",
         type=str,
-        default="./data/annotations",
-        help="Directory containing COCO JSON annotation stubs",
+        default="data/annotations",
+        help="Directory containing COCO JSON annotation stubs (default: data/annotations)",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./outputs/CatV1/v1_without_angle/",
-        help="Base output directory for Gal-DINO results",
+        default="outputs/CatV1",
+        help="Base output directory for Gal-DINO results (default: outputs/CatV1)",
     )
     parser.add_argument(
         "--cat_version",
@@ -388,6 +400,7 @@ def run_consolidation(
     annotations_dir: str,
     output_dir: str,
     catalogs_dir: str,
+    all_sbs_dir: str = "data/all_SBs",
     cat_version: str = "v1",
     img_pixel_size_arcsec: float = 2.0,
     calibrate_score: bool = True,
@@ -428,10 +441,7 @@ def run_consolidation(
     catalog_file = catalog_matches[0]
 
     # Preprocessed FITS cutouts
-    fits_file_dir = os.path.join(
-        os.path.dirname(emu_tile_path).replace("EMUcatalog_main/images", ""),
-        f"data/all_SBs/{sbid}/All_fits/",
-    )
+    fits_file_dir = os.path.join(all_sbs_dir, sbid, "All_fits")
 
     # ---- Load selavy catalog -----------------------------------------------
     tab_selavy = pd.read_csv(catalog_file, header=0)
@@ -851,8 +861,6 @@ def main() -> None:
         logger.error("EMU tile not found: %s", emu_tile_path)
         sys.exit(1)
 
-    catalogs_dir = args.emu_images_dir.replace("images", "catalogs")
-
     # repo root is two levels up from pipeline/
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -862,7 +870,8 @@ def main() -> None:
             emu_tile_path=emu_tile_path,
             annotations_dir=args.annotations_dir,
             output_dir=args.output_dir,
-            catalogs_dir=catalogs_dir,
+            catalogs_dir=args.emu_catalogs_dir,
+            all_sbs_dir=args.all_sbs_dir,
             cat_version=args.cat_version,
             img_pixel_size_arcsec=args.img_pixel_size_arcsec,
             calibrate_score=not args.no_calibrate_score,

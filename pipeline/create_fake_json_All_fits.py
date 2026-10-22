@@ -74,16 +74,22 @@ def get_args_parser() -> argparse.ArgumentParser:
         help="Filename of the EMU FITS tile (basename only)",
     )
     parser.add_argument(
-        "--images_base_dir",
+        "--all_sbs_dir",
         type=str,
-        default="./EMUcatalog_main/images",
-        help="Base directory containing EMU FITS tiles",
+        default="data/all_SBs",
+        help="Working area for per-SBid cutouts (default: data/all_SBs)",
+    )
+    parser.add_argument(
+        "--annotations_dir",
+        type=str,
+        default="data/annotations",
+        help="Directory for COCO JSON annotations (default: data/annotations)",
     )
     parser.add_argument(
         "--mask_path",
         type=str,
-        default="./Allmask/",
-        help="Directory containing the reference mask PNGs",
+        default="data/Allmask",
+        help="Directory containing reference mask PNGs (default: data/Allmask)",
     )
     return parser
 
@@ -194,9 +200,11 @@ def build_images_and_annotations(
 def create_annotation_json(
     sbid: str,
     mask_path: str,
+    all_sbs_dir: str = "data/all_SBs",
+    annotations_dir: str = "data/annotations",
 ) -> None:
-    image_path = f"./all_SBs/{sbid}/All2017/"
-    out_dir = "./annotations"
+    image_path = os.path.join(all_sbs_dir, sbid, "All2017")
+    out_dir = annotations_dir
     out_file = os.path.join(out_dir, f"instances_angle_{sbid}.json")
 
     os.makedirs(out_dir, exist_ok=True)
@@ -237,7 +245,12 @@ def main() -> None:
     logger.info("Working on SBid: %s", sbid)
 
     try:
-        create_annotation_json(sbid=sbid, mask_path=args.mask_path)
+        create_annotation_json(
+            sbid=sbid,
+            mask_path=args.mask_path,
+            all_sbs_dir=args.all_sbs_dir,
+            annotations_dir=args.annotations_dir,
+        )
     except (FileNotFoundError, RuntimeError) as exc:
         logger.error("%s", exc)
         sys.exit(1)

@@ -69,10 +69,28 @@ def get_args_parser() -> argparse.ArgumentParser:
         help="Angular size of each cutout in arcminutes (default: 8.0)",
     )
     parser.add_argument(
-        "--images_base_dir",
+        "--emu_images_dir",
         type=str,
-        default="./EMUcatalog_main/images",
-        help="Base directory that holds EMU FITS tiles",
+        default="data/images",
+        help="Directory containing EMU FITS tiles (default: data/images)",
+    )
+    parser.add_argument(
+        "--wise_images_dir",
+        type=str,
+        default="data/images_wise",
+        help="Directory containing WISE mosaic FITS files (default: data/images_wise)",
+    )
+    parser.add_argument(
+        "--emu_catalogs_dir",
+        type=str,
+        default="data/catalogs",
+        help="Directory containing selavy CSV catalogs (default: data/catalogs)",
+    )
+    parser.add_argument(
+        "--all_sbs_dir",
+        type=str,
+        default="data/all_SBs",
+        help="Working area for per-SBid cutouts (default: data/all_SBs)",
     )
     return parser
 
@@ -175,6 +193,7 @@ def download_cutouts(
     emu_tile_path: str,
     catalog_path: str,
     wise_tile_path: str,
+    all_sbs_dir: str = "data/all_SBs",
     cutout_size: int = 240,
     angular_size_arcmin: float = 8.0,
 ) -> None:
@@ -187,10 +206,11 @@ def download_cutouts(
     emu_tile_path     : Absolute/relative path to the EMU FITS tile
     catalog_path      : Path to the selavy CSV catalog for this tile
     wise_tile_path    : Path to the WISE mosaic FITS for this tile
+    all_sbs_dir       : Working area for per-SBid cutouts
     cutout_size       : Pixel dimensions of each square cutout
     angular_size_arcmin: Angular size of cutout in arcminutes
     """
-    output_fits_path = f"./all_SBs/{sbid}"
+    output_fits_path = os.path.join(all_sbs_dir, sbid)
     out_folder = f"{output_fits_path}/All_Images_8arcmV1"
     wise_out_folder = f"{output_fits_path}/All_Images_8arcmV1_wise"
 
@@ -298,7 +318,7 @@ def main() -> None:
     args = parser.parse_args()
 
     tile_filename = args.Image_SBid
-    emu_tile_path = os.path.join(args.images_base_dir, tile_filename)
+    emu_tile_path = os.path.join(args.emu_images_dir, tile_filename)
 
     # Extract SBid from filename
     sbmatch = re.search(r"SB(\d+)", tile_filename)
@@ -317,19 +337,17 @@ def main() -> None:
         logger.error("EMU tile not found: %s", emu_tile_path)
         sys.exit(1)
 
-    # Locate catalog
-    catalogs_dir = os.path.dirname(emu_tile_path).replace("images", "catalogs")
+    # Locate catalog using explicit emu_catalogs_dir
     try:
-        catalog_path = find_catalog(catalogs_dir, sbid)
+        catalog_path = find_catalog(args.emu_catalogs_dir, sbid)
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         sys.exit(1)
     logger.info("Found catalog: %s", catalog_path)
 
-    # Locate WISE mosaic
-    wise_tile_path = emu_tile_path.replace(".fits", "_wise_mosaic.fits").replace(
-        "/images/", "/images_wise/"
-    )
+    # Locate WISE mosaic using explicit wise_images_dir
+    wise_basename = tile_filename.replace(".fits", "_wise_mosaic.fits")
+    wise_tile_path = os.path.join(args.wise_images_dir, wise_basename)
     if not os.path.exists(wise_tile_path):
         logger.error("WISE mosaic not found: %s", wise_tile_path)
         sys.exit(1)
@@ -340,6 +358,7 @@ def main() -> None:
         emu_tile_path=emu_tile_path,
         catalog_path=catalog_path,
         wise_tile_path=wise_tile_path,
+        all_sbs_dir=args.all_sbs_dir,
         cutout_size=args.cutout_size,
         angular_size_arcmin=args.angular_size,
     )

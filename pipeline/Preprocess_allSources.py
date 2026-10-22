@@ -64,10 +64,28 @@ def get_args_parser() -> argparse.ArgumentParser:
         help="Filename of the EMU FITS tile (basename only)",
     )
     parser.add_argument(
-        "--images_base_dir",
+        "--emu_images_dir",
         type=str,
-        default="./EMUcatalog_main/images",
-        help="Base directory containing EMU FITS tiles",
+        default="data/images",
+        help="Directory containing EMU FITS tiles (default: data/images)",
+    )
+    parser.add_argument(
+        "--emu_catalogs_dir",
+        type=str,
+        default="data/catalogs",
+        help="Directory containing selavy CSV catalogs (default: data/catalogs)",
+    )
+    parser.add_argument(
+        "--all_sbs_dir",
+        type=str,
+        default="data/all_SBs",
+        help="Working area for per-SBid cutouts (default: data/all_SBs)",
+    )
+    parser.add_argument(
+        "--cutout_size",
+        type=int,
+        default=240,
+        help="Pixel size of each cutout (default: 240)",
     )
     parser.add_argument(
         "--epmask",
@@ -261,6 +279,8 @@ def preprocess_source(
 def preprocess_tile(
     sbid: str,
     catalog_path: str,
+    all_sbs_dir: str = "data/all_SBs",
+    cutout_size: int = 240,
     epmask: int = 5,
     wpmask: int = 5,
     sigma: float = 3.0,
@@ -268,7 +288,7 @@ def preprocess_tile(
     """
     Preprocess all sources for a given SBid and write outputs.
     """
-    output_fits_path = f"./all_SBs/{sbid}"
+    output_fits_path = os.path.join(all_sbs_dir, sbid)
     inpath_radio = os.path.join(output_fits_path, "All_Images_8arcmV1")
     inpath_wise = os.path.join(output_fits_path, "All_Images_8arcmV1_wise")
     outpath_png = os.path.join(output_fits_path, "All2017")
@@ -287,7 +307,7 @@ def preprocess_tile(
         )
     logger.info("Processing %d sources for SBid %s", len(tab), sbid)
 
-    img_size = (2, 240, 240)
+    img_size = (2, cutout_size, cutout_size)
     n_ok = 0
     n_fail = 0
 
@@ -353,7 +373,7 @@ def main() -> None:
     args = parser.parse_args()
 
     tile_filename = args.Image_SBid
-    emu_tile_path = os.path.join(args.images_base_dir, tile_filename)
+    emu_tile_path = os.path.join(args.emu_images_dir, tile_filename)
 
     sbmatch = re.search(r"SB(\d+)", tile_filename)
     if not sbmatch:
@@ -368,9 +388,8 @@ def main() -> None:
         logger.error("EMU tile not found: %s", emu_tile_path)
         sys.exit(1)
 
-    catalogs_dir = os.path.dirname(emu_tile_path).replace("images", "catalogs")
     try:
-        catalog_path = find_catalog(catalogs_dir, sbid)
+        catalog_path = find_catalog(args.emu_catalogs_dir, sbid)
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         sys.exit(1)
@@ -379,6 +398,8 @@ def main() -> None:
     preprocess_tile(
         sbid=sbid,
         catalog_path=catalog_path,
+        all_sbs_dir=args.all_sbs_dir,
+        cutout_size=args.cutout_size,
         epmask=args.epmask,
         wpmask=args.wpmask,
         sigma=args.sigma,
