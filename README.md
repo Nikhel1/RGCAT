@@ -67,10 +67,9 @@ RGCAT/
 Data directories (not tracked in git, mount at runtime):
 ```
 data/
-├── EMUcatalog_main/
-│   ├── images/          # EMU FITS tiles
-│   ├── images_wise/     # WISE mosaics
-│   └── catalogs/        # selavy CSV catalogs
+├── images/              # EMU FITS tiles
+├── images_wise/         # WISE mosaics
+├── catalogs/            # selavy CSV catalogs
 ├── all_SBs/             # per-tile cutouts (generated)
 ├── annotations/         # COCO JSON stubs (generated)
 └── Allmask/             # reference mask PNGs
