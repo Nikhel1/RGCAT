@@ -8,13 +8,13 @@
 # ---------------------------------------------------------------------------
 paths:
   # Directory containing EMU FITS tile images
-  emu_images_dir: "data/EMUcatalog_main/images"
+  emu_images_dir: "data/images"
 
   # Directory containing WISE mosaics
-  wise_images_dir: "data/EMUcatalog_main/images_wise"
+  wise_images_dir: "data/images_wise"
 
   # Directory containing selavy CSV catalogs
-  emu_catalogs_dir: "data/EMUcatalog_main/catalogs"
+  emu_catalogs_dir: "data/catalogs"
 
   # Working area: per-SBid cutouts and preprocessed files
   all_sbs_dir: "data/all_SBs"
@@ -26,10 +26,10 @@ paths:
   mask_dir: "data/Allmask"
 
   # Gal-DINO inference outputs  (results0_all_<SBid>.json, checkpoints)
-  output_dir: "outputs/CatV1/v1_without_angle"
+  output_dir: "outputs/CatV1"
 
   # Trained Gal-DINO model checkpoint
-  dino_checkpoint: "outputs/CatV1/v1_without_angle/checkpoint.pth"
+  dino_checkpoint: "outputs/CatV1/checkpoint.pth"
 
   # Log files
   log_dir: "logs"
