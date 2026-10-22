@@ -6,9 +6,16 @@ For a given EMU tile (identified by its filename), downloads:
   - EMU radio cutouts  →  all_SBs/<SBid>/All_Images_8arcmV1/
   - WISE IR cutouts    →  all_SBs/<SBid>/All_Images_8arcmV1_wise/
 
-Usage (from within CatalogNET_V1/):
+Optionally parallelises per-source cutout extraction across CPU cores
+using ``concurrent.futures`` from the Python standard library — no extra
+dependencies required, works on both HPC (SLURM) and cloud instances.
+
+Usage:
     python Download_allSources.py --Image_SBid image.i.EMU_0044-46.SB50180....fits
+    python Download_allSources.py --Image_SBid ... --n_workers 8 --parallel_backend process
 """
+
+from __future__ import annotations
 
 import argparse
 import glob
@@ -17,6 +24,7 @@ import os
 import re
 import sys
 import warnings
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 import astropy.units as u
 import numpy as np
@@ -92,6 +100,26 @@ def get_args_parser() -> argparse.ArgumentParser:
         default="data/all_SBs",
         help="Working area for per-SBid cutouts (default: data/all_SBs)",
     )
+    parser.add_argument(
+        "--n_workers",
+        type=int,
+        default=None,
+        help=(
+            "Number of parallel workers (default: auto — uses all available "
+            "CPU cores). Set to 1 for sequential execution."
+        ),
+    )
+    parser.add_argument(
+        "--parallel_backend",
+        type=str,
+        default="process",
+        choices=["process", "thread"],
+        help=(
+            "Parallel backend: 'process' (ProcessPoolExecutor, default) for "
+            "CPU-bound work or 'thread' (ThreadPoolExecutor) when I/O dominates "
+            "and the GIL is released by underlying libraries."
+        ),
+    )
     return parser
 
 
@@ -126,32 +154,33 @@ def find_catalog(catalogs_dir: str, sbid: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Cutout logic
+# WISE cutout (I/O-optimised — no intermediate disk write / re-read)
 # ---------------------------------------------------------------------------
 def make_wise_cutout(
     pos: SkyCoord,
     angular_size: u.Quantity,
     cutout_size: int,
-    img_wise,
+    img_wise_data: np.ndarray,
     wcs_wise: WCS,
+    radio_wcs: WCS,
+    radio_shape: tuple,
     wise_outpath: str,
-    radio_outpath: str,
 ) -> bool:
     """
     Extract a WISE IR cutout centred on *pos*, reproject to match the radio
-    cutout WCS, and write to *wise_outpath* (reprojected file has _repo suffix).
+    cutout WCS, and write the reprojected result to *wise_outpath*.
+
+    Unlike the original implementation this avoids writing an intermediate
+    WISE FITS file and re-opening both the radio and WISE files from disk —
+    the WCS and data needed for reprojection are passed in-memory.
 
     Returns True on success, False on any failure.
     """
-    extended_size = (
-        int((angular_size + 2.5 * u.arcmin).to(u.arcmin).value * 60 / 2),
-        int((angular_size + 2.5 * u.arcmin).to(u.arcmin).value * 60 / 2),
-    )
     try:
         d_wise = Cutout2D(
-            img_wise[0].data.squeeze(),
+            img_wise_data,
             position=pos,
-            size=(cutout_size + 30, cutout_size + 30),  # slightly larger before reproject
+            size=(cutout_size + 30, cutout_size + 30),
             fill_value=np.nan,
             wcs=wcs_wise.celestial,
         )
@@ -164,25 +193,145 @@ def make_wise_cutout(
         return False
 
     try:
-        tmp = img_wise[0].header.copy()
-        tmp.update(d_wise.wcs.to_header())
-        fits.writeto(wise_outpath, d_wise.data, tmp, overwrite=True)
-
-        first = fits.open(radio_outpath)[0]
-        wise = fits.open(wise_outpath)[0]
+        # Reproject WISE cutout onto the radio cutout WCS — all in-memory
         arr, _ = reproject_interp(
-            wise, WCS(first.header).celestial, shape_out=first.data.shape
+            (d_wise.data, d_wise.wcs), radio_wcs, shape_out=radio_shape,
         )
 
-        tmp2 = wise.header.copy()
-        tmp2.update(WCS(first.header).celestial.to_header())
+        out_header = radio_wcs.to_header()
         repo_path = wise_outpath.replace(".fits", "_repo.fits")
-        fits.writeto(repo_path, arr, tmp2, overwrite=True)
+        fits.writeto(repo_path, arr, out_header, overwrite=True)
         return True
 
     except Exception as exc:
         logger.warning("WISE reproject failed for %s: %s", pos, exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Parallel worker state
+# ---------------------------------------------------------------------------
+# When using ProcessPoolExecutor each worker process needs its own copy of
+# the large FITS tile data.  We load them once per process and stash in this
+# dict so subsequent _process_source calls reuse the open HDU lists.
+# For ThreadPoolExecutor the main thread populates this dict; threads share
+# the same memory space.
+_worker_state: dict = {}
+
+
+def _init_worker(emu_tile_path: str, wise_tile_path: str) -> None:
+    """Initialiser for ProcessPoolExecutor — opens FITS files once per worker."""
+    _worker_state["img"] = fits.open(emu_tile_path, relax=True)
+    _worker_state["wcs"] = WCS(_worker_state["img"][0].header)
+    _worker_state["img_wise"] = fits.open(wise_tile_path, relax=True)
+    _worker_state["wcs_wise"] = WCS(_worker_state["img_wise"][0].header)
+
+
+def _process_source(
+    src_id: str,
+    ra: float,
+    dec: float,
+    out_folder: str,
+    wise_out_folder: str,
+    cutout_size: int,
+    angular: u.Quantity,
+) -> dict:
+    """
+    Process a single source: extract radio cutout and (if needed) WISE cutout.
+
+    Relies on ``_worker_state`` being populated (either by ``_init_worker``
+    in a ProcessPoolExecutor, or by the caller for sequential / thread mode).
+
+    Returns a dict with keys: src_id, radio_ok, wise_ok, radio_fail, wise_fail.
+    """
+    result = {
+        "src_id": src_id,
+        "radio_ok": False,
+        "wise_ok": False,
+        "radio_fail": False,
+        "wise_fail": False,
+    }
+
+    pos = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+
+    img = _worker_state["img"]
+    wcs = _worker_state["wcs"]
+    img_wise = _worker_state["img_wise"]
+    wcs_wise = _worker_state["wcs_wise"]
+
+    img_size = (cutout_size, cutout_size)
+
+    # ---- EMU radio cutout --------------------------------------------------
+    radio_outpath = os.path.join(out_folder, f"{src_id}_emu.fits")
+    radio_cutout_wcs = None
+    radio_cutout_data = None
+
+    if not os.path.exists(radio_outpath):
+        try:
+            d = Cutout2D(
+                img[0].data.squeeze(),
+                position=pos,
+                size=img_size,
+                fill_value=np.nan,
+                wcs=wcs.celestial,
+            )
+            d.data[~np.isfinite(d.data)] = 0.0
+            tmp = img[0].header.copy()
+            tmp.update(d.wcs.to_header())
+            fits.writeto(radio_outpath, d.data, tmp, overwrite=True)
+            result["radio_ok"] = True
+            radio_cutout_wcs = d.wcs
+            radio_cutout_data = d.data
+        except Exception as exc:
+            logger.debug("Radio cutout failed for %s: %s", src_id, exc)
+            result["radio_fail"] = True
+            return result
+    else:
+        # File already exists — load WCS + data for WISE reprojection target
+        try:
+            with fits.open(radio_outpath) as existing:
+                radio_cutout_wcs = WCS(existing[0].header).celestial
+                radio_cutout_data = existing[0].data.squeeze()
+            result["radio_ok"] = True
+        except Exception:
+            return result
+
+    # ---- WISE IR cutout ----------------------------------------------------
+    wise_outpath = os.path.join(wise_out_folder, f"{src_id}_wise.fits")
+    wise_repo_path = wise_outpath.replace(".fits", "_repo.fits")
+    if not os.path.exists(wise_outpath) and not os.path.exists(wise_repo_path):
+        success = make_wise_cutout(
+            pos=pos,
+            angular_size=angular,
+            cutout_size=cutout_size,
+            img_wise_data=img_wise[0].data.squeeze(),
+            wcs_wise=wcs_wise,
+            radio_wcs=radio_cutout_wcs,
+            radio_shape=radio_cutout_data.shape,
+            wise_outpath=wise_outpath,
+        )
+        if success:
+            result["wise_ok"] = True
+        else:
+            result["wise_fail"] = True
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Result accumulator
+# ---------------------------------------------------------------------------
+def _accumulate(result: dict, counters: dict, failed_ids: list) -> None:
+    """Update mutable *counters* dict and *failed_ids* list from a result."""
+    if result["radio_ok"]:
+        counters["radio_ok"] += 1
+    if result["radio_fail"]:
+        counters["radio_fail"] += 1
+        failed_ids.append(result["src_id"])
+    if result["wise_ok"]:
+        counters["wise_ok"] += 1
+    if result["wise_fail"]:
+        counters["wise_fail"] += 1
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +345,8 @@ def download_cutouts(
     all_sbs_dir: str = "data/all_SBs",
     cutout_size: int = 240,
     angular_size_arcmin: float = 8.0,
+    n_workers: int | None = None,
+    parallel_backend: str = "process",
 ) -> None:
     """
     Download all EMU + WISE cutouts for sources listed in *catalog_path*.
@@ -209,23 +360,15 @@ def download_cutouts(
     all_sbs_dir       : Working area for per-SBid cutouts
     cutout_size       : Pixel dimensions of each square cutout
     angular_size_arcmin: Angular size of cutout in arcminutes
+    n_workers         : Number of parallel workers (None → auto)
+    parallel_backend  : 'process' or 'thread'
     """
     output_fits_path = os.path.join(all_sbs_dir, sbid)
-    out_folder = f"{output_fits_path}/All_Images_8arcmV1"
-    wise_out_folder = f"{output_fits_path}/All_Images_8arcmV1_wise"
+    out_folder = os.path.join(output_fits_path, "All_Images_8arcmV1")
+    wise_out_folder = os.path.join(output_fits_path, "All_Images_8arcmV1_wise")
 
     os.makedirs(out_folder, exist_ok=True)
     os.makedirs(wise_out_folder, exist_ok=True)
-
-    # -- Open EMU tile -------------------------------------------------------
-    logger.info("Opening EMU tile: %s", emu_tile_path)
-    img = fits.open(emu_tile_path, relax=True)
-    wcs = WCS(img[0].header)
-
-    # -- Open WISE mosaic ----------------------------------------------------
-    logger.info("Opening WISE mosaic: %s", wise_tile_path)
-    img_wise = fits.open(wise_tile_path, relax=True)
-    wcs_wise = WCS(img_wise[0].header)
 
     # -- Load catalog --------------------------------------------------------
     logger.info("Reading catalog: %s", catalog_path)
@@ -237,76 +380,102 @@ def download_cutouts(
     logger.info("Catalog has %d sources", len(tab))
 
     angular = angular_size_arcmin * u.arcmin
-    img_size = (cutout_size, cutout_size)
 
-    n_radio_ok = 0
-    n_wise_ok = 0
-    n_radio_fail = 0
-    n_wise_fail = 0
-    cutout_failed_ids = []
+    # Resolve worker count
+    if n_workers is None:
+        n_workers = os.cpu_count() or 1
+    n_workers = max(1, n_workers)
+    logger.info("Using %d worker(s) with '%s' backend", n_workers, parallel_backend)
 
-    for _, row in tqdm(tab.iterrows(), total=len(tab), desc=f"SB{sbid} cutouts"):
-        ra = row["ra_deg_radio"]
-        dec = row["dec_deg_radio"]
-        src_id = f"{ra}_{dec}"
-        pos = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+    # Build the list of source tuples
+    sources = [
+        (f"{row['ra_deg_radio']}_{row['dec_deg_radio']}",
+         row["ra_deg_radio"], row["dec_deg_radio"])
+        for _, row in tab.iterrows()
+    ]
 
-        # ---- EMU radio cutout ----------------------------------------------
-        radio_outpath = f"{out_folder}/{src_id}_emu.fits"
-        if not os.path.exists(radio_outpath):
-            try:
-                d = Cutout2D(
-                    img[0].data.squeeze(),
-                    position=pos,
-                    size=img_size,
-                    fill_value=np.nan,
-                    wcs=wcs.celestial,
+    counters = {"radio_ok": 0, "wise_ok": 0, "radio_fail": 0, "wise_fail": 0}
+    failed_ids: list = []
+
+    # -- Sequential fallback (n_workers == 1) -------------------------------
+    if n_workers == 1:
+        logger.info("Opening EMU tile: %s", emu_tile_path)
+        logger.info("Opening WISE mosaic: %s", wise_tile_path)
+        _init_worker(emu_tile_path, wise_tile_path)
+        try:
+            for src_id, ra, dec in tqdm(
+                sources, total=len(sources), desc=f"SB{sbid} cutouts",
+            ):
+                result = _process_source(
+                    src_id=src_id, ra=ra, dec=dec,
+                    out_folder=out_folder, wise_out_folder=wise_out_folder,
+                    cutout_size=cutout_size, angular=angular,
                 )
-                d.data[~np.isfinite(d.data)] = 0.0
-                tmp = img[0].header.copy()
-                tmp.update(d.wcs.to_header())
-                fits.writeto(radio_outpath, d.data, tmp, overwrite=True)
-                n_radio_ok += 1
-            except Exception as exc:
-                logger.debug("Radio cutout failed for %s: %s", src_id, exc)
-                cutout_failed_ids.append(src_id)
-                n_radio_fail += 1
-                continue  # no point trying WISE without radio
+                _accumulate(result, counters, failed_ids)
+        finally:
+            _worker_state["img"].close()
+            _worker_state["img_wise"].close()
+            _worker_state.clear()
 
-        # ---- WISE IR cutout ------------------------------------------------
-        wise_outpath = f"{wise_out_folder}/{src_id}_wise.fits"
-        wise_repo_path = wise_outpath.replace(".fits", "_repo.fits")
-        if not os.path.exists(wise_outpath) and not os.path.exists(wise_repo_path):
-            success = make_wise_cutout(
-                pos=pos,
-                angular_size=angular,
-                cutout_size=cutout_size,
-                img_wise=img_wise,
-                wcs_wise=wcs_wise,
-                wise_outpath=wise_outpath,
-                radio_outpath=radio_outpath,
-            )
-            if success:
-                n_wise_ok += 1
-            else:
-                n_wise_fail += 1
+    # -- Parallel: ProcessPoolExecutor --------------------------------------
+    elif parallel_backend == "process":
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_worker,
+            initargs=(emu_tile_path, wise_tile_path),
+        ) as executor:
+            futures = {
+                executor.submit(
+                    _process_source,
+                    src_id=src_id, ra=ra, dec=dec,
+                    out_folder=out_folder, wise_out_folder=wise_out_folder,
+                    cutout_size=cutout_size, angular=angular,
+                ): src_id
+                for src_id, ra, dec in sources
+            }
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"SB{sbid} cutouts",
+            ):
+                _accumulate(future.result(), counters, failed_ids)
 
-    img.close()
-    img_wise.close()
+    # -- Parallel: ThreadPoolExecutor ---------------------------------------
+    else:
+        logger.info("Opening EMU tile: %s", emu_tile_path)
+        logger.info("Opening WISE mosaic: %s", wise_tile_path)
+        _init_worker(emu_tile_path, wise_tile_path)
+        try:
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _process_source,
+                        src_id=src_id, ra=ra, dec=dec,
+                        out_folder=out_folder, wise_out_folder=wise_out_folder,
+                        cutout_size=cutout_size, angular=angular,
+                    ): src_id
+                    for src_id, ra, dec in sources
+                }
+                for future in tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=f"SB{sbid} cutouts",
+                ):
+                    _accumulate(future.result(), counters, failed_ids)
+        finally:
+            _worker_state["img"].close()
+            _worker_state["img_wise"].close()
+            _worker_state.clear()
 
     logger.info(
         "SB%s download complete — radio: %d ok / %d failed | WISE: %d ok / %d failed",
-        sbid,
-        n_radio_ok,
-        n_radio_fail,
-        n_wise_ok,
-        n_wise_fail,
+        sbid, counters["radio_ok"], counters["radio_fail"],
+        counters["wise_ok"], counters["wise_fail"],
     )
-    if cutout_failed_ids:
+    if failed_ids:
         logger.warning(
             "%d radio cutouts failed. First few: %s",
-            len(cutout_failed_ids),
-            cutout_failed_ids[:5],
+            len(failed_ids), failed_ids[:5],
         )
 
 
@@ -361,6 +530,8 @@ def main() -> None:
         all_sbs_dir=args.all_sbs_dir,
         cutout_size=args.cutout_size,
         angular_size_arcmin=args.angular_size,
+        n_workers=args.n_workers,
+        parallel_backend=args.parallel_backend,
     )
 
 

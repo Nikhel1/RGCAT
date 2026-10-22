@@ -7,9 +7,16 @@ previously downloaded radio + WISE cutouts and writes:
   - PNG RGB composites  →  all_SBs/<SBid>/All2017/
   - Preprocessed FITS   →  all_SBs/<SBid>/All_fits/
 
-Usage (from within CatalogNET_V1/):
+Optionally parallelises per-source preprocessing across CPU cores
+using ``concurrent.futures`` from the Python standard library — no extra
+dependencies required, works on both HPC (SLURM) and cloud instances.
+
+Usage:
     python Preprocess_allSources.py --Image_SBid image.i.EMU_0044-46.SB50180....fits
+    python Preprocess_allSources.py --Image_SBid ... --n_workers 8 --parallel_backend process
 """
+
+from __future__ import annotations
 
 import argparse
 import glob
@@ -18,19 +25,16 @@ import os
 import re
 import sys
 import warnings
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-import astropy.units as u
 import astropink as pu
 import numpy as np
 import pandas as pd
-from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.io import fits
-from astropy.io.votable import parse as parse_votable
 from astropy.utils.exceptions import AstropyWarning
 from astropy.wcs import WCS
 from PIL import Image
 from reproject import reproject_interp
-from scipy import ndimage
 from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=AstropyWarning)
@@ -104,6 +108,25 @@ def get_args_parser() -> argparse.ArgumentParser:
         type=float,
         default=3.0,
         help="Detection threshold in sigma for island segmentation (default: 3.0)",
+    )
+    parser.add_argument(
+        "--n_workers",
+        type=int,
+        default=None,
+        help=(
+            "Number of parallel workers (default: auto — uses all available "
+            "CPU cores). Set to 1 for sequential execution."
+        ),
+    )
+    parser.add_argument(
+        "--parallel_backend",
+        type=str,
+        default="process",
+        choices=["process", "thread"],
+        help=(
+            "Parallel backend: 'process' (ProcessPoolExecutor, default) for "
+            "CPU-bound work or 'thread' (ThreadPoolExecutor) when I/O dominates."
+        ),
     )
     return parser
 
@@ -191,12 +214,13 @@ def wise_preprocess(data: np.ndarray, wpmask: int = 2) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Per-source preprocessing
+# Per-source preprocessing (pure function — reads input, returns arrays)
 # ---------------------------------------------------------------------------
 def preprocess_source(
     src_id: str,
-    row,
-    img_size: tuple,
+    ra: float,
+    dec: float,
+    cutout_size: int,
     inpath_radio: str,
     inpath_wise: str,
     epmask: int = 5,
@@ -207,8 +231,7 @@ def preprocess_source(
     """
     Load, reproject, and preprocess a single source's radio + WISE cutouts.
 
-    Returns (src_id, array_shape_2xHxW) or None on any failure.
-    array[0] = preprocessed radio, array[1] = preprocessed WISE.
+    Returns (src_id, e_proc, e_raw, w_proc, reproject_wcs) or None on failure.
     """
     emu_src = os.path.join(inpath_radio, f"{src_id}_emu.fits")
 
@@ -216,7 +239,7 @@ def preprocess_source(
         dlist = fits.open(emu_src)
         d = dlist[0]
     except Exception as exc:
-        logger.debug("Cannot open radio FITS for %s: %s", src_id, exc)
+        logger.warning("Cannot open radio FITS for %s: %s", src_id, exc)
         return None
 
     d_wcs = WCS(d.header).celestial
@@ -225,16 +248,18 @@ def preprocess_source(
 
     # Build centred reprojection WCS
     reproject_wcs_header = d.header.copy()
-    reproject_wcs_header["CRVAL1"] = row["ra_deg_cont"]
-    reproject_wcs_header["CRVAL2"] = row["dec_deg_cont"]
-    reproject_wcs_header["CRPIX1"] = img_size[1] // 2
-    reproject_wcs_header["CRPIX2"] = img_size[2] // 2
+    reproject_wcs_header["CRVAL1"] = ra
+    reproject_wcs_header["CRVAL2"] = dec
+    reproject_wcs_header["CRPIX1"] = cutout_size // 2
+    reproject_wcs_header["CRPIX2"] = cutout_size // 2
     reproject_wcs = WCS(reproject_wcs_header).celestial
 
     try:
-        e_new_data, _ = reproject_interp(d, reproject_wcs, shape_out=img_size[1:])
+        e_new_data, _ = reproject_interp(
+            d, reproject_wcs, shape_out=(cutout_size, cutout_size),
+        )
     except Exception as exc:
-        logger.debug("Reproject failed for %s: %s", src_id, exc)
+        logger.warning("Reproject failed for %s: %s", src_id, exc)
         dlist.close()
         return None
     dlist.close()
@@ -249,18 +274,25 @@ def preprocess_source(
         return None
 
     # ---- WISE --------------------------------------------------------------
-    wise_src = os.path.join(inpath_wise, f"{src_id}_wise.fits")
+    # Download_allSources writes reprojected WISE cutouts as *_wise_repo.fits.
+    # The intermediate *_wise.fits only exists if reprojection was not needed.
+    wise_src = os.path.join(inpath_wise, f"{src_id}_wise_repo.fits")
+    if not os.path.exists(wise_src):
+        wise_src = os.path.join(inpath_wise, f"{src_id}_wise.fits")
     try:
         wlist = fits.open(wise_src)
         w = wlist[0]
     except Exception as exc:
-        logger.debug("Cannot open WISE FITS for %s: %s", src_id, exc)
+        logger.warning("Cannot open WISE FITS for %s: %s", src_id, exc)
         return None
 
     try:
-        w_new_data, _ = reproject_interp(w, reproject_wcs, shape_out=img_size[1:])
+        w_new_data, _ = reproject_interp(
+            w, reproject_wcs,
+            shape_out=(cutout_size, cutout_size),
+        )
     except Exception as exc:
-        logger.debug("WISE reproject failed for %s: %s", src_id, exc)
+        logger.warning("WISE reproject failed for %s: %s", src_id, exc)
         wlist.close()
         return None
     wlist.close()
@@ -274,6 +306,72 @@ def preprocess_source(
 
 
 # ---------------------------------------------------------------------------
+# Worker: preprocess + write outputs (self-contained, returns status only)
+# ---------------------------------------------------------------------------
+def _preprocess_and_write(
+    src_id: str,
+    ra: float,
+    dec: float,
+    cutout_size: int,
+    inpath_radio: str,
+    inpath_wise: str,
+    outpath_png: str,
+    outpath_fits: str,
+    epmask: int = 5,
+    wpmask: int = 5,
+    lower: float = 3.0,
+) -> dict:
+    """
+    Process one source end-to-end: load, reproject, preprocess, write outputs.
+
+    Returns a status dict: {src_id, ok (bool), skipped (bool)}.
+    """
+    fits_out = os.path.join(outpath_fits, f"{src_id}_emu.fits")
+    png_out = os.path.join(outpath_png, f"{src_id}_rgb.png")
+
+    # Skip if outputs already exist
+    if os.path.exists(fits_out) and os.path.exists(png_out):
+        return {"src_id": src_id, "ok": True, "skipped": True}
+
+    result = preprocess_source(
+        src_id=src_id,
+        ra=ra,
+        dec=dec,
+        cutout_size=cutout_size,
+        inpath_radio=inpath_radio,
+        inpath_wise=inpath_wise,
+        epmask=epmask,
+        wpmask=wpmask,
+        lower=lower,
+    )
+    if result is None:
+        return {"src_id": src_id, "ok": False, "skipped": False}
+
+    _, e_proc, e_raw, w_proc, reproject_wcs = result
+
+    # ---- Build RGB PNG (radio G+B channels, WISE R channel) ---------------
+    data_16 = ((2**16 - 1) * e_proc).astype(np.uint16)
+    img_rgb = np.zeros((data_16.shape[0], data_16.shape[1], 3), dtype=np.uint8)
+    img_rgb[:, :, 2] = data_16 >> 8   # radio → blue (high byte)
+    img_rgb[:, :, 1] = data_16 & 0xFF  # radio → green (low byte)
+
+    # WISE → red channel
+    w_32 = ((2**16 - 1) * w_proc).astype(np.uint32)
+    img_rgb[:, :, 0] = w_32 >> 8
+
+    if not os.path.exists(png_out):
+        Image.fromarray(img_rgb, "RGB").save(png_out, "PNG")
+
+    # ---- Save preprocessed radio FITS -------------------------------------
+    if not os.path.exists(fits_out):
+        header = reproject_wcs.to_header()
+        hdu = fits.PrimaryHDU(data=e_raw, header=header)
+        hdu.writeto(fits_out, overwrite=True)
+
+    return {"src_id": src_id, "ok": True, "skipped": False}
+
+
+# ---------------------------------------------------------------------------
 # Main pipeline function
 # ---------------------------------------------------------------------------
 def preprocess_tile(
@@ -284,6 +382,8 @@ def preprocess_tile(
     epmask: int = 5,
     wpmask: int = 5,
     sigma: float = 3.0,
+    n_workers: int | None = None,
+    parallel_backend: str = "process",
 ) -> None:
     """
     Preprocess all sources for a given SBid and write outputs.
@@ -307,58 +407,88 @@ def preprocess_tile(
         )
     logger.info("Processing %d sources for SBid %s", len(tab), sbid)
 
-    img_size = (2, cutout_size, cutout_size)
+    # Resolve worker count
+    if n_workers is None:
+        n_workers = os.cpu_count() or 1
+    n_workers = max(1, n_workers)
+    logger.info("Using %d worker(s) with '%s' backend", n_workers, parallel_backend)
+
+    # Build the list of source tuples
+    sources = [
+        (f"{row['ra_deg_cont']}_{row['dec_deg_cont']}",
+         float(row["ra_deg_cont"]), float(row["dec_deg_cont"]))
+        for _, row in tab.iterrows()
+    ]
+
     n_ok = 0
     n_fail = 0
 
-    for _, row in tqdm(tab.iterrows(), total=len(tab), desc=f"SB{sbid} preprocess"):
-        src_id = f"{row['ra_deg_cont']}_{row['dec_deg_cont']}"
+    # -- Sequential (n_workers == 1) ----------------------------------------
+    if n_workers == 1:
+        for src_id, ra, dec in tqdm(
+            sources, total=len(sources), desc=f"SB{sbid} preprocess",
+        ):
+            result = _preprocess_and_write(
+                src_id=src_id, ra=ra, dec=dec,
+                cutout_size=cutout_size,
+                inpath_radio=inpath_radio, inpath_wise=inpath_wise,
+                outpath_png=outpath_png, outpath_fits=outpath_fits,
+                epmask=epmask, wpmask=wpmask, lower=sigma,
+            )
+            if result["ok"]:
+                n_ok += 1
+            else:
+                n_fail += 1
 
-        # Skip if outputs already exist
-        fits_out = os.path.join(outpath_fits, f"{src_id}_emu.fits")
-        png_out = os.path.join(outpath_png, f"{src_id}_rgb.png")
-        if os.path.exists(fits_out) and os.path.exists(png_out):
-            n_ok += 1
-            continue
+    # -- Parallel: ProcessPoolExecutor --------------------------------------
+    elif parallel_backend == "process":
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(
+                    _preprocess_and_write,
+                    src_id=src_id, ra=ra, dec=dec,
+                    cutout_size=cutout_size,
+                    inpath_radio=inpath_radio, inpath_wise=inpath_wise,
+                    outpath_png=outpath_png, outpath_fits=outpath_fits,
+                    epmask=epmask, wpmask=wpmask, lower=sigma,
+                ): src_id
+                for src_id, ra, dec in sources
+            }
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"SB{sbid} preprocess",
+            ):
+                result = future.result()
+                if result["ok"]:
+                    n_ok += 1
+                else:
+                    n_fail += 1
 
-        result = preprocess_source(
-            src_id=src_id,
-            row=row,
-            img_size=img_size,
-            inpath_radio=inpath_radio,
-            inpath_wise=inpath_wise,
-            epmask=epmask,
-            wpmask=wpmask,
-            lower=sigma,
-        )
-        if result is None:
-            n_fail += 1
-            continue
-
-        src_id_out, e_proc, e_raw, w_proc, reproject_wcs = result
-
-        # ---- Build RGB PNG (radio G+B channels, WISE R channel) ------------
-        data_16 = ((2**16 - 1) * e_proc).astype(np.uint16)
-        img_rgb = np.zeros((data_16.shape[0], data_16.shape[1], 3), dtype=np.uint8)
-        img_rgb[:, :, 2] = data_16 >> 8   # radio → blue (high byte)
-        img_rgb[:, :, 1] = data_16 & 0xFF  # radio → green (low byte)
-
-        # WISE → red channel
-        w_32 = ((2**16 - 1) * w_proc).astype(np.uint32)
-        img_rgb[:, :, 0] = w_32 >> 8
-
-        if not os.path.exists(png_out):
-            os.makedirs(outpath_png, exist_ok=True)
-            Image.fromarray(img_rgb, "RGB").save(png_out, "PNG")
-
-        # ---- Save preprocessed radio FITS ----------------------------------
-        if not os.path.exists(fits_out):
-            os.makedirs(outpath_fits, exist_ok=True)
-            header = reproject_wcs.to_header()
-            hdu = fits.PrimaryHDU(data=e_raw, header=header)
-            hdu.writeto(fits_out, overwrite=True)
-
-        n_ok += 1
+    # -- Parallel: ThreadPoolExecutor ---------------------------------------
+    else:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(
+                    _preprocess_and_write,
+                    src_id=src_id, ra=ra, dec=dec,
+                    cutout_size=cutout_size,
+                    inpath_radio=inpath_radio, inpath_wise=inpath_wise,
+                    outpath_png=outpath_png, outpath_fits=outpath_fits,
+                    epmask=epmask, wpmask=wpmask, lower=sigma,
+                ): src_id
+                for src_id, ra, dec in sources
+            }
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"SB{sbid} preprocess",
+            ):
+                result = future.result()
+                if result["ok"]:
+                    n_ok += 1
+                else:
+                    n_fail += 1
 
     logger.info(
         "SB%s preprocessing complete — %d ok / %d failed", sbid, n_ok, n_fail
@@ -403,6 +533,8 @@ def main() -> None:
         epmask=args.epmask,
         wpmask=args.wpmask,
         sigma=args.sigma,
+        n_workers=args.n_workers,
+        parallel_backend=args.parallel_backend,
     )
 
 

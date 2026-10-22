@@ -241,6 +241,11 @@ def process_tile(
         # ------------------------------------------------------------------ #
         cutout_dir = os.path.join(all_sbs_dir, sbid, "All_Images_8arcmV1")
         if not os.path.exists(cutout_dir):
+            n_workers = proc.get("n_workers")
+            workers_arg = (
+                f" --n_workers {n_workers}" if n_workers is not None else ""
+            )
+            backend = proc.get("parallel_backend", "process")
             run_command(
                 (
                     f"python {pipeline_dir}/Download_allSources.py"
@@ -251,6 +256,8 @@ def process_tile(
                     f" --all_sbs_dir {all_sbs_dir}"
                     f" --cutout_size {proc['cutout_size']}"
                     f" --angular_size {proc['angular_size_arcmin']}"
+                    f"{workers_arg}"
+                    f" --parallel_backend {backend}"
                 ),
                 sbid, "Download_allSources",
             )
@@ -262,6 +269,11 @@ def process_tile(
         # ------------------------------------------------------------------ #
         all_fits_dir = os.path.join(all_sbs_dir, sbid, "All_fits")
         if not os.path.exists(all_fits_dir):
+            n_workers = proc.get("n_workers")
+            workers_arg = (
+                f" --n_workers {n_workers}" if n_workers is not None else ""
+            )
+            backend = proc.get("parallel_backend", "process")
             run_command(
                 (
                     f"python {pipeline_dir}/Preprocess_allSources.py"
@@ -273,6 +285,8 @@ def process_tile(
                     f" --epmask {proc['epmask']}"
                     f" --wpmask {proc['wpmask']}"
                     f" --sigma {proc['sigma']}"
+                    f"{workers_arg}"
+                    f" --parallel_backend {backend}"
                 ),
                 sbid, "Preprocess_allSources",
             )

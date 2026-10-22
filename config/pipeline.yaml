@@ -79,6 +79,10 @@ processing:
   wpmask: 5                 # min island pixel count for WISE segmentation
   sigma: 3.0                # detection threshold in sigma
 
+  # Parallelisation for Download_allSources.py cutout extraction
+  n_workers: null           # null → auto (all CPU cores); 1 → sequential
+  parallel_backend: "process"  # 'process' (CPU-bound) or 'thread' (I/O-bound)
+
 # ---------------------------------------------------------------------------
 # Gal-DINO Model
 # ---------------------------------------------------------------------------
