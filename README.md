@@ -70,12 +70,28 @@ data/
 ├── images/              # EMU FITS tiles
 ├── images_wise/         # WISE mosaics
 ├── catalogs/            # selavy CSV catalogs
-├── all_SBs/             # per-tile cutouts (generated)
-├── annotations/         # COCO JSON stubs (generated)
-└── Allmask/             # reference mask PNGs
+├── all_SBs/             # per-tile working area (generated)
+│   └── <SBid>/
+│       ├── All_Images_8arcmV1/           # radio cutouts
+│       ├── All_Images_8arcmV1_wise/      # WISE cutouts
+│       ├── All2017/                      # RGB PNGs (preprocessed)
+│       ├── All_fits/                     # preprocessed radio FITS
+│       └── instances_angle_<SBid>.json   # COCO annotation stub (generated)
+└── annotations/         # fixed calibration JSONs for score recalibration
+    ├── instances_train2017.json           # (optional — see note below)
+    └── instances_val2017.json
 outputs/
-└── CatV1/v1_without_angle/   # Gal-DINO predictions + checkpoint
+└── CatV1/               # Gal-DINO predictions + checkpoint
 ```
+
+> `data/Allmask/` is no longer required. The per-tile COCO annotation stub
+> is generated synthetically on the fly by `create_fake_json_All_fits.py`
+> and written directly into `all_SBs/<SBid>/`.
+
+> `data/annotations/` is only needed when confidence score recalibration is
+> enabled (the default). It holds the two fixed train/val annotation JSONs
+> used to fit the spline recalibrator in `get_consol_cat.py`. If these files
+> are not available, pass `--no_calibrate_score` to `get_consol_cat.py`.
 
 ---
 
