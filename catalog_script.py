@@ -128,14 +128,21 @@ _SLURM_TEMPLATE = Template("""\
 #SBATCH --mail-user=${mail_user}
 #SBATCH --output=${log_dir}/galdino_${sbid}_%j.out
 
-python -m torch.distributed.launch \\
+# --- Environment setup -------------------------------------------------------
+source ~/.bashrc
+conda activate ${conda_env}
+${module_load_line}
+# -----------------------------------------------------------------------------
+
+torchrun \\
     --nproc_per_node=${nproc_per_node} \\
     --master_port=${master_port} \\
-    --use_env \\
     galdino/main.py \\
     -c ${dino_config} \\
     --eval \\
     --resume ${dino_checkpoint} \\
+    --device ${device} \\
+    --coco_path ${coco_path} \\
     --SBid ${sbid}
 """)
 
@@ -310,32 +317,68 @@ def process_tile(
             logger.info("[SB%s] Annotation JSON exists — skipping", sbid)
 
         # ------------------------------------------------------------------ #
-        # Stage 4 — Gal-DINO inference (SLURM)                               #
+        # Stage 4 — Gal-DINO inference                                        #
         # ------------------------------------------------------------------ #
         res_file = os.path.join(output_dir, f"results0_all_{sbid}.json")
         if os.path.exists(ann_file) and not os.path.exists(res_file):
-            slurm_script = _SLURM_TEMPLATE.substitute(
-                account         = slurm["account"],
-                sbid            = sbid,
-                nodes           = slurm["inference"]["nodes"],
-                ntasks_per_node = slurm["inference"]["ntasks_per_node"],
-                mem             = slurm["inference"]["mem"],
-                time            = slurm["inference"]["time"],
-                cpus_per_task   = slurm["inference"]["cpus_per_task"],
-                gres            = slurm["inference"]["gres"],
-                mail_type       = slurm["mail_type"],
-                mail_user       = slurm["mail_user"],
-                log_dir         = paths["log_dir"],
-                nproc_per_node  = galdino["nproc_per_node"],
-                master_port     = galdino["master_port"],
-                dino_config     = galdino["config"],
-                dino_checkpoint = paths["dino_checkpoint"],
-            )
-            job_id = submit_slurm_job(slurm_script, sbid)
-            wait_for_job(
-                job_id,
-                poll_interval=slurm.get("poll_interval_seconds", 30),
-            )
+            inference_backend = slurm.get("inference", {}).get("backend", "slurm")
+            device_arg        = galdino.get("device", "auto")
+            # coco_path is the data root — parent of all_SBs/
+            coco_path = os.path.dirname(os.path.abspath(all_sbs_dir))
+
+            if inference_backend == "slurm":
+                # Build the module load line (empty string skips it)
+                cuda_module = slurm.get("cuda_module", "")
+                module_load_line = (
+                    f"module load {cuda_module}" if cuda_module else ""
+                )
+                slurm_script = _SLURM_TEMPLATE.substitute(
+                    account         = slurm["account"],
+                    sbid            = sbid,
+                    nodes           = slurm["inference"]["nodes"],
+                    ntasks_per_node = slurm["inference"]["ntasks_per_node"],
+                    mem             = slurm["inference"]["mem"],
+                    time            = slurm["inference"]["time"],
+                    cpus_per_task   = slurm["inference"]["cpus_per_task"],
+                    gres            = slurm["inference"]["gres"],
+                    mail_type       = slurm["mail_type"],
+                    mail_user       = slurm["mail_user"],
+                    log_dir         = paths["log_dir"],
+                    conda_env       = slurm.get("conda_env", ""),
+                    module_load_line= module_load_line,
+                    nproc_per_node  = galdino["nproc_per_node"],
+                    master_port     = galdino["master_port"],
+                    dino_config     = galdino["config"],
+                    dino_checkpoint = paths["dino_checkpoint"],
+                    device          = device_arg,
+                    coco_path       = coco_path,
+                )
+                job_id = submit_slurm_job(slurm_script, sbid)
+                wait_for_job(
+                    job_id,
+                    poll_interval=slurm.get("poll_interval_seconds", 30),
+                )
+
+            else:
+                # Local execution — runs torchrun in the current shell.
+                # Works on cloud instances, laptops (CPU/MPS/CUDA/ROCm).
+                nproc = galdino.get("nproc_per_node", 1)
+                port  = galdino.get("master_port", "29501")
+                run_command(
+                    (
+                        f"torchrun"
+                        f" --nproc_per_node={nproc}"
+                        f" --master_port={port}"
+                        f" galdino/main.py"
+                        f" -c {galdino['config']}"
+                        f" --eval"
+                        f" --resume {paths['dino_checkpoint']}"
+                        f" --device {device_arg}"
+                        f" --coco_path {coco_path}"
+                        f" --SBid {sbid}"
+                    ),
+                    sbid, "galdino_inference",
+                )
         else:
             logger.info("[SB%s] Gal-DINO results exist — skipping inference", sbid)
 

@@ -35,7 +35,7 @@ def get_args_parser():
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='coco')
-    parser.add_argument('--coco_path', type=str, default='CatalogNET_V1')
+    parser.add_argument('--coco_path', type=str, default='data')
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
     parser.add_argument('--fix_size', action='store_true')
@@ -81,8 +81,9 @@ def get_args_parser():
                         help='path where to save, empty for no saving')
     parser.add_argument('--note', default='',
                         help='add some notes to the experiment')
-    parser.add_argument('--device', default='cuda',
-                        help='device to use for training / testing')
+    parser.add_argument('--device', default='auto',
+                        help='device to use for training / testing. '
+                             '"auto" selects cuda → mps → cpu automatically.')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--pretrain_model_path', help='load from other checkpoint')
@@ -167,6 +168,16 @@ def main(args):
         assert args.masks, "Frozen training is meant for segmentation only"
     print(args)
 
+    # Resolve 'auto' to the best available device
+    if args.device == 'auto':
+        if torch.cuda.is_available():
+            args.device = 'cuda'
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            args.device = 'mps'
+        else:
+            args.device = 'cpu'
+        print(f"Auto-selected device: {args.device}")
+
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -200,30 +211,38 @@ def main(args):
                                   weight_decay=args.weight_decay)
     
 
-    dataset_train = build_dataset(image_set='train', args=args)
+    dataset_train = None
+    data_loader_train = None
+    if not args.eval:
+        dataset_train = build_dataset(image_set='train', args=args)
+
     dataset_val = build_dataset(image_set=args.data_eval, args=args)
 
     if args.distributed:
-        sampler_train = DistributedSampler(dataset_train)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
+        sampler_train = DistributedSampler(dataset_train) if dataset_train is not None else None
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        sampler_train = torch.utils.data.RandomSampler(dataset_train) if dataset_train is not None else None
 
-    batch_sampler_train = torch.utils.data.BatchSampler(
-        sampler_train, args.batch_size, drop_last=True)
+    if dataset_train is not None:
+        batch_sampler_train = torch.utils.data.BatchSampler(
+            sampler_train, args.batch_size, drop_last=True)
+        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
+                                       collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
-    data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                   collate_fn=utils.collate_fn, num_workers=args.num_workers)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
                                  drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
-    if args.onecyclelr:
-        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len(data_loader_train), epochs=args.epochs, pct_start=0.2)
-    elif args.multi_step_lr:
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_drop_list)
+    if not args.eval:
+        if args.onecyclelr:
+            lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len(data_loader_train), epochs=args.epochs, pct_start=0.2)
+        elif args.multi_step_lr:
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_drop_list)
+        else:
+            lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
     else:
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+        lr_scheduler = None
 
 
     if args.dataset_file == "coco_panoptic":

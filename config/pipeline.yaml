@@ -88,6 +88,9 @@ galdino:
   config: "galdino/config/DINO/DINO_4scale.py"
   nproc_per_node: 1
   master_port: "29501"
+  # Device for inference.  "auto" selects cuda → mps → cpu automatically.
+  # Other valid values: "cuda", "cuda:0", "cpu", "mps"
+  device: "auto"
 
 # ---------------------------------------------------------------------------
 # SLURM  (used by catalog_script.py when running on a cluster)
@@ -98,7 +101,17 @@ slurm:
   mail_type: "ALL"
   poll_interval_seconds: 30   # how often to poll squeue for job completion
 
+  # Conda environment name to activate inside the SLURM job
+  conda_env: "ddino-v"
+
+  # CUDA module to load inside the SLURM job (set to "" to skip)
+  cuda_module: "cuda/12.1.0"
+
   inference:
+    # backend controls how stage 4 is run:
+    #   "slurm"  — submit via sbatch (HPC clusters)
+    #   "local"  — run directly in the current process (cloud / laptop)
+    backend: "slurm"
     nodes: 1
     ntasks_per_node: 1
     cpus_per_task: 4

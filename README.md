@@ -105,22 +105,80 @@ cd RGCAT
 # 2. Create conda environment
 conda create -n rgcat python=3.10
 conda activate rgcat
-conda install -c pytorch pytorch torchvision pytorch-cuda=12.1
 
-# 3. Install pipeline deps
+# 3. Install PyTorch for your hardware (auto-detects CUDA / ROCm / MPS / CPU)
+python install_torch.py
+
+# 4. Install pipeline deps
 pip install -r requirements.txt
 
-# 4. Compile GalDINO CUDA deformable attention ops
+# 5. Compile GalDINO CUDA deformable attention ops
 cd galdino/models/dino/ops
 python setup.py build install
 cd ../../../../
 
-# 5. Edit config
+# 6. Edit config
 #    Set paths in config/pipeline.yaml to point at your data mount
 
-# 6. Run over all tiles
+# 7. Run over all tiles
 python catalog_script.py --config config/pipeline.yaml
 ```
+
+---
+
+## Environment setup by platform
+
+`install_torch.py` handles torch installation automatically.
+The table below shows what it selects and any extra steps needed per platform.
+
+| Platform | Detected by | Torch variant | Extra steps |
+|---|---|---|---|
+| NVIDIA GPU (SLURM / cloud) | `nvcc` / `nvidia-smi` | CUDA wheel (cu121 / cu124 / …) | `module load cuda/<version>` on HPC |
+| AMD GPU (ROCm) | `rocm-smi` / `rocminfo` | ROCm wheel (rocm6.x) | Install ROCm runtime first |
+| Apple Silicon (M1/M2/M3) | `platform.machine == arm64` | Default PyPI wheel (MPS built-in) | None |
+| CPU-only (laptop, CI) | fallback | CPU-only wheel | None |
+
+### SLURM cluster (HPC)
+
+Set these in `config/pipeline.yaml` under the `slurm` section:
+
+```yaml
+slurm:
+  conda_env: "ddino-v"        # conda env to activate inside the job
+  cuda_module: "cuda/12.1.0"  # module load line (set to "" to skip)
+  inference:
+    backend: "slurm"          # submit via sbatch
+```
+
+### Cloud instance / laptop (no SLURM)
+
+```yaml
+slurm:
+  inference:
+    backend: "local"          # run torchrun directly in the current shell
+galdino:
+  device: "auto"              # cuda → mps → cpu fallback
+```
+
+### AMD GPU (ROCm)
+
+Install the ROCm runtime (6.x recommended), then:
+
+```bash
+python install_torch.py   # will select the ROCm wheel automatically
+```
+
+Set `galdino.device: "cuda"` in `pipeline.yaml` — PyTorch ROCm exposes its
+devices under the CUDA API, so `torch.cuda.is_available()` returns `True`.
+
+### CPU-only / Apple MPS
+
+```bash
+python install_torch.py   # selects cpu or MPS wheel automatically
+```
+
+Set `galdino.device: "auto"` (the default). Distributed inference is not
+supported on MPS; `nproc_per_node` is automatically treated as 1.
 
 ---
 

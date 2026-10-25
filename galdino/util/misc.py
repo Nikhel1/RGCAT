@@ -539,9 +539,23 @@ def init_distributed_mode(args):
 
     print("world_size:{} rank:{} local_rank:{}".format(args.world_size, args.rank, args.local_rank))
     args.distributed = True
-    torch.cuda.set_device(args.local_rank)
-    args.dist_backend = 'nccl'
-    print('| distributed init (rank {}): {}'.format(args.rank, args.dist_url), flush=True)
+
+    # Choose backend based on device type.
+    # nccl  — NVIDIA CUDA (fastest, GPU-to-GPU collectives)
+    # nccl  — AMD ROCm  (PyTorch ROCm builds expose nccl-compatible API)
+    # gloo  — CPU, MPS (Apple Silicon), or any non-CUDA device
+    device = getattr(args, 'device', 'cuda')
+    use_cuda = isinstance(device, str) and device.startswith('cuda')
+    use_rocm = use_cuda and getattr(torch.version, 'hip', None) is not None
+
+    if use_cuda or use_rocm:
+        torch.cuda.set_device(args.local_rank)
+        args.dist_backend = 'nccl'
+    else:
+        args.dist_backend = 'gloo'
+
+    print('| distributed init (rank {}): {} backend={}'.format(
+        args.rank, args.dist_url, args.dist_backend), flush=True)
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
     print("Before torch.distributed.barrier()")

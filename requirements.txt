@@ -33,14 +33,18 @@ PyYAML==6.0.2
 # (no additional deps beyond numpy/scipy)
 
 # ---- GalDINO framework ----
-# Install these separately via the galdino/requirements.txt
-# or the conda environment; listed here for documentation only.
-# torch>=2.1.0
-# torchvision>=0.16.0
-# timm>=0.9.0
-# cython
-# submitit
-# addict
-# yapf
-# termcolor
-# git+https://github.com/cocodataset/panopticapi.git#egg=panopticapi
+# PyTorch must be installed before this file because the correct variant
+# depends on your hardware (CUDA version, ROCm, MPS, or CPU-only).
+# Run the bundled auto-installer first:
+#
+#   python install_torch.py          # detects hardware, installs correct wheel
+#   python install_torch.py --dry-run  # preview without installing
+#
+# Then install the rest of the GalDINO deps (included below):
+timm==0.9.16
+cython
+addict
+yapf
+termcolor
+# panopticapi (optional, only needed for panoptic segmentation tasks):
+# pip install git+https://github.com/cocodataset/panopticapi.git#egg=panopticapi

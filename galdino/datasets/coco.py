@@ -393,7 +393,7 @@ def build(image_set, args):
         PATHS = {
             "train": (root / "train_fits", root / "annotations" / f'{mode1}_train2017.json'),
             "val": (root / "val_fits", root / "annotations" / f'{mode}_val2017.json'),
-            "all": (root / f"all_SBs/{args.SBid}/All_fits", root / "annotations" / f'{mode}_{args.SBid}.json'),
+            "all": (root / f"all_SBs/{args.SBid}/All_fits", root / f"all_SBs/{args.SBid}" / f'{mode}_{args.SBid}.json'),
         }
 
     img_folder, ann_file = PATHS[image_set]
