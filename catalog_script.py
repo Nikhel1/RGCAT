@@ -143,6 +143,7 @@ torchrun \\
     --resume ${dino_checkpoint} \\
     --device ${device} \\
     --coco_path ${coco_path} \\
+    --output_dir ${galdino_out_dir} \\
     --SBid ${sbid}
 """)
 
@@ -319,7 +320,8 @@ def process_tile(
         # ------------------------------------------------------------------ #
         # Stage 4 — Gal-DINO inference                                        #
         # ------------------------------------------------------------------ #
-        res_file = os.path.join(output_dir, f"results0_all_{sbid}.json")
+        galdino_out_dir = os.path.join(output_dir, sbid)
+        res_file = os.path.join(galdino_out_dir, f"results0_all_{sbid}.json")
         if os.path.exists(ann_file) and not os.path.exists(res_file):
             inference_backend = slurm.get("inference", {}).get("backend", "slurm")
             device_arg        = galdino.get("device", "auto")
@@ -352,6 +354,7 @@ def process_tile(
                     dino_checkpoint = paths["dino_checkpoint"],
                     device          = device_arg,
                     coco_path       = coco_path,
+                    galdino_out_dir = galdino_out_dir,
                 )
                 job_id = submit_slurm_job(slurm_script, sbid)
                 wait_for_job(
@@ -375,6 +378,7 @@ def process_tile(
                         f" --resume {paths['dino_checkpoint']}"
                         f" --device {device_arg}"
                         f" --coco_path {coco_path}"
+                        f" --output_dir {galdino_out_dir}"
                         f" --SBid {sbid}"
                     ),
                     sbid, "galdino_inference",
@@ -386,7 +390,7 @@ def process_tile(
         # Stage 5 — Consolidated catalogue                                    #
         # ------------------------------------------------------------------ #
         cons_sentinel = os.path.join(
-            output_dir, sbid, "cons_catalogs",
+            galdino_out_dir, "cons_catalogs",
             "consolidated_catalog_last_allExtendedv1.fits",
         )
         if not os.path.exists(cons_sentinel):
@@ -398,7 +402,7 @@ def process_tile(
                     f" --emu_catalogs_dir {paths['emu_catalogs_dir']}"
                     f" --all_sbs_dir {all_sbs_dir}"
                     f" --shared_annotations_dir {annotations_dir}"
-                    f" --output_dir {output_dir}"
+                    f" --output_dir {galdino_out_dir}"
                 ),
                 sbid, "get_consol_cat",
             )
@@ -416,7 +420,7 @@ def process_tile(
             return
 
         va_sentinel = os.path.join(
-            output_dir, sbid, "cons_catalogs",
+            galdino_out_dir, "cons_catalogs",
             "value_added_catwise_ls_allExtended.fits",
         )
         if not os.path.exists(va_sentinel):
@@ -424,7 +428,7 @@ def process_tile(
                 (
                     f"python {pipeline_dir}/value_added_cat.py"
                     f" --SBid {sbid}"
-                    f" --output_dir {output_dir}"
+                    f" --output_dir {galdino_out_dir}"
                     f" --wise_catalogs_dir {paths['wise_catalogs_dir']}"
                     f" --desi_catalogs_dir {paths['desi_catalogs_dir']}"
                 ),

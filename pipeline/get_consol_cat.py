@@ -416,7 +416,7 @@ def run_consolidation(
     _setup_splinecalibration_path(repo_root)
     from recalibrate import get_recalibration_function  # noqa: E402
 
-    out_dir_sbid = os.path.join(output_dir, sbid)
+    out_dir_sbid = output_dir
     cons_dir     = os.path.join(out_dir_sbid, "cons_catalogs")
     reg_dir      = os.path.join(out_dir_sbid, "region_files")
     os.makedirs(cons_dir, exist_ok=True)

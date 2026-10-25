@@ -338,7 +338,7 @@ def run_value_added(
     desi_catalogs_dir: str,
     cat_version: str = "v1",
 ) -> None:
-    cons_dir = os.path.join(output_dir, sbid, "cons_catalogs")
+    cons_dir = os.path.join(output_dir, "cons_catalogs")
 
     # ---- Load consolidated catalogue ---------------------------------------
     cons_csv = os.path.join(cons_dir, f"consolidated_catalog_last{cat_version}.csv")

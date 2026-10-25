@@ -77,7 +77,7 @@ def get_args_parser():
     parser.add_argument('--angle_loss_coef', default=1, type=float)
 
     # training parameters
-    parser.add_argument('--output_dir', default='outputs_gal/CatV1/v1_without_angle',
+    parser.add_argument('--output_dir', default='outputs/CatV1',
                         help='path where to save, empty for no saving')
     parser.add_argument('--note', default='',
                         help='add some notes to the experiment')

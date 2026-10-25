@@ -97,8 +97,8 @@ galdino:
 # ---------------------------------------------------------------------------
 slurm:
   account: "OD-241663"
-  mail_user: "nikhel.gupta@csiro.au"
-  mail_type: "ALL"
+  #mail_user: "xx@gmail.com"
+  #mail_type: "ALL"
   poll_interval_seconds: 30   # how often to poll squeue for job completion
 
   # Conda environment name to activate inside the SLURM job
