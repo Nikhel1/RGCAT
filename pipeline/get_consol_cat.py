@@ -454,17 +454,25 @@ def run_consolidation(
     # ---- Score calibration -------------------------------------------------
     frecal = None
     if calibrate_score:
-        gt_train = os.path.join(shared_annotations_dir, "instances_train2017.json")
+        gt_train  = os.path.join(shared_annotations_dir, "instances_train2017.json")
         res_train = os.path.join(output_dir, "results0_train.json")
         gt_val    = os.path.join(shared_annotations_dir, "instances_val2017.json")
         res_val   = os.path.join(output_dir, "results0_val.json")
 
-        scorest, labelst = get_scores_and_labels(gt_train, res_train)
-        scoresv, labelsv = get_scores_and_labels(gt_val, res_val)
+        missing = [p for p in (gt_train, res_train, gt_val, res_val)
+                   if not os.path.exists(p)]
+        if missing:
+            logger.warning(
+                "Score calibration skipped — missing file(s): %s",
+                ", ".join(missing),
+            )
+        else:
+            scorest, labelst = get_scores_and_labels(gt_train, res_train)
+            scoresv, labelsv = get_scores_and_labels(gt_val, res_val)
 
-        spline_method, splines = "natural", 2
-        frecal = get_recalibration_function(scorest, labelst, spline_method, splines)
-        logger.info("Score recalibration function fitted on %d train samples", len(scorest))
+            spline_method, splines = "natural", 2
+            frecal = get_recalibration_function(scorest, labelst, spline_method, splines)
+            logger.info("Score recalibration function fitted on %d train samples", len(scorest))
 
     # ---- Load COCO results -------------------------------------------------
     gt_coco     = COCO(gt_file)
