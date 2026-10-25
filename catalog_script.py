@@ -296,15 +296,13 @@ def process_tile(
         # ------------------------------------------------------------------ #
         # Stage 3 — COCO annotation stub                                      #
         # ------------------------------------------------------------------ #
-        ann_file = os.path.join(annotations_dir, f"instances_angle_{sbid}.json")
+        ann_file = os.path.join(all_sbs_dir, sbid, f"instances_angle_{sbid}.json")
         if not os.path.exists(ann_file):
             run_command(
                 (
                     f"python {pipeline_dir}/create_fake_json_All_fits.py"
                     f" --Image_SBid {tile_filename}"
                     f" --all_sbs_dir {all_sbs_dir}"
-                    f" --annotations_dir {annotations_dir}"
-                    f" --mask_path {paths['mask_dir']}"
                 ),
                 sbid, "create_fake_json_All_fits",
             )
@@ -356,7 +354,7 @@ def process_tile(
                     f" --emu_images_dir {paths['emu_images_dir']}"
                     f" --emu_catalogs_dir {paths['emu_catalogs_dir']}"
                     f" --all_sbs_dir {all_sbs_dir}"
-                    f" --annotations_dir {annotations_dir}"
+                    f" --shared_annotations_dir {annotations_dir}"
                     f" --output_dir {output_dir}"
                 ),
                 sbid, "get_consol_cat",

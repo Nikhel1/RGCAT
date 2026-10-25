@@ -119,10 +119,14 @@ def get_args_parser() -> argparse.ArgumentParser:
         help="Working area for per-SBid cutouts (default: data/all_SBs)",
     )
     parser.add_argument(
-        "--annotations_dir",
+        "--shared_annotations_dir",
         type=str,
         default="data/annotations",
-        help="Directory containing COCO JSON annotation stubs (default: data/annotations)",
+        help=(
+            "Directory containing shared COCO annotation stubs "
+            "(train/val calibration JSONs). Per-tile annotation is read "
+            "from all_sbs_dir/<SBid>/ (default: data/annotations)"
+        ),
     )
     parser.add_argument(
         "--output_dir",
@@ -397,7 +401,7 @@ def write_subset_fits_and_ds9(
 def run_consolidation(
     sbid: str,
     emu_tile_path: str,
-    annotations_dir: str,
+    shared_annotations_dir: str,
     output_dir: str,
     catalogs_dir: str,
     all_sbs_dir: str = "data/all_SBs",
@@ -429,7 +433,7 @@ def run_consolidation(
 
     # ---- Paths -------------------------------------------------------------
     data_keyword = "all"
-    gt_file  = os.path.join(annotations_dir, f"instances_angle_{sbid}.json")
+    gt_file  = os.path.join(all_sbs_dir, sbid, f"instances_angle_{sbid}.json")
     res_file = os.path.join(output_dir, f"results0_{data_keyword}_{sbid}.json")
 
     catalog_pattern = os.path.join(catalogs_dir, f"*{sbid}*.csv")
@@ -450,9 +454,9 @@ def run_consolidation(
     # ---- Score calibration -------------------------------------------------
     frecal = None
     if calibrate_score:
-        gt_train = os.path.join(annotations_dir, "instances_train2017.json")
+        gt_train = os.path.join(shared_annotations_dir, "instances_train2017.json")
         res_train = os.path.join(output_dir, "results0_train.json")
-        gt_val    = os.path.join(annotations_dir, "instances_val2017.json")
+        gt_val    = os.path.join(shared_annotations_dir, "instances_val2017.json")
         res_val   = os.path.join(output_dir, "results0_val.json")
 
         scorest, labelst = get_scores_and_labels(gt_train, res_train)
@@ -868,7 +872,7 @@ def main() -> None:
         run_consolidation(
             sbid=sbid,
             emu_tile_path=emu_tile_path,
-            annotations_dir=args.annotations_dir,
+            shared_annotations_dir=args.shared_annotations_dir,
             output_dir=args.output_dir,
             catalogs_dir=args.emu_catalogs_dir,
             all_sbs_dir=args.all_sbs_dir,

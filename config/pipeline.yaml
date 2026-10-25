@@ -25,11 +25,9 @@ paths:
   # Working area: per-SBid cutouts and preprocessed files
   all_sbs_dir: "data/all_SBs"
 
-  # COCO annotation JSONs produced by create_fake_json_All_fits.py
+  # Shared COCO annotation JSONs (train/val calibration stubs for get_consol_cat.py).
+  # Per-tile annotation JSONs are written to all_sbs_dir/<SBid>/ instead.
   annotations_dir: "data/annotations"
-
-  # Mask PNGs used as reference for fake annotation generation
-  mask_dir: "data/Allmask"
 
   # Gal-DINO inference outputs  (results0_all_<SBid>.json, checkpoints)
   output_dir: "outputs/CatV1"

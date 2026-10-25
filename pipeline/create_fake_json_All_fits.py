@@ -7,7 +7,7 @@ of a given EMU tile.  The annotations are "fake" in the sense that they
 use a fixed centroid keypoint (image centre) — the model will refine them.
 
 Reads from: all_SBs/<SBid>/All2017/*_rgb.png
-Writes to:  annotations/instances_angle_<SBid>.json
+Writes to:  all_SBs/<SBid>/instances_angle_<SBid>.json
 
 Usage (from within CatalogNET_V1/):
     python create_fake_json_All_fits.py --Image_SBid image.i.EMU_0044-46.SB50180....fits
@@ -22,14 +22,12 @@ import re
 import sys
 
 import numpy as np
-from PIL import Image
-from shapely.geometry import MultiPolygon
+from shapely.geometry import MultiPolygon, Polygon
 
 from src.create_annotations import (
     create_annotation_format,
     create_category_annotation,
     create_image_annotation,
-    create_sub_mask_annotation,
     get_coco_json_format,
 )
 
@@ -79,33 +77,53 @@ def get_args_parser() -> argparse.ArgumentParser:
         default="data/all_SBs",
         help="Working area for per-SBid cutouts (default: data/all_SBs)",
     )
-    parser.add_argument(
-        "--annotations_dir",
-        type=str,
-        default="data/annotations",
-        help="Directory for COCO JSON annotations (default: data/annotations)",
-    )
-    parser.add_argument(
-        "--mask_path",
-        type=str,
-        default="data/Allmask",
-        help="Directory containing reference mask PNGs (default: data/Allmask)",
-    )
     return parser
+
+
+# ---------------------------------------------------------------------------
+# Synthetic annotation template
+# ---------------------------------------------------------------------------
+def _make_template_annotation(
+    cutout_size: int,
+    image_id: int = 1,
+    annotation_id: int = 1,
+    category_id: int = 6,  # S (Single) — a safe placeholder class
+) -> dict:
+    """
+    Build a fake COCO annotation without needing a reference mask PNG.
+
+    The annotation is a small square centred on the image, which is all
+    the downstream Gal-DINO inference code requires as a stub.
+    """
+    cx, cy = cutout_size / 2.0, cutout_size / 2.0
+    half = cutout_size / 8.0  # 1/4 of the image width
+
+    poly = Polygon([
+        (cx - half, cy - half),
+        (cx + half, cy - half),
+        (cx + half, cy + half),
+        (cx - half, cy + half),
+    ])
+    segmentation = [np.array(poly.exterior.coords).ravel().tolist()]
+    keypoints = [round(cx), round(cy), 2]
+
+    multi_poly = MultiPolygon([poly])
+    return create_annotation_format(
+        multi_poly, segmentation, image_id, keypoints, category_id, annotation_id
+    )
 
 
 # ---------------------------------------------------------------------------
 # Annotation builder
 # ---------------------------------------------------------------------------
 def build_images_and_annotations(
-    mask_path: str,
     image_path: str,
+    cutout_size: int = 240,
 ) -> tuple[list, list, int]:
     """
-    Build COCO 'images' and 'annotations' lists.
+    Build COCO 'images' and 'annotations' lists without a reference mask.
 
-    Uses a single representative mask image to derive a shared annotation
-    (fake centroid keypoint at image centre) that is replicated for every
+    A synthetic centred-square annotation template is replicated for every
     source image under *image_path*.
 
     Returns
@@ -115,61 +133,9 @@ def build_images_and_annotations(
     annotation_id = 1
     image_id = 1
 
-    # ---- Load reference mask -----------------------------------------------
-    mask_files = glob.glob(os.path.join(mask_path, "*_rgb.png"))
-    if not mask_files:
-        raise FileNotFoundError(
-            f"No *_rgb.png mask files found in {mask_path}"
-        )
-    mask_file = mask_files[0]
-    logger.info("Using reference mask: %s", mask_file)
+    template = _make_template_annotation(cutout_size, image_id, annotation_id)
+    w = h = cutout_size
 
-    mask_image_open = Image.open(mask_file).convert("RGB")
-    w, h = mask_image_open.size
-    ir_x = w / 2.0
-    ir_y = h / 2.0
-    mask_np = np.array(mask_image_open)
-
-    # Build one annotation from the reference mask
-    annotation = None
-    for instance_id in np.unique(mask_np[:, :, 1]):
-        if instance_id == 0:
-            continue
-        sub_mask = mask_np[:, :, 1] == instance_id
-        unique_classes = np.unique(sub_mask * mask_np[:, :, 2])
-        # skip if only background (0)
-        non_zero = unique_classes[unique_classes != 0]
-        if len(non_zero) == 0:
-            continue
-        category_id = int(non_zero[0])
-
-        try:
-            polygons, segmentations = create_sub_mask_annotation(sub_mask)
-        except Exception as exc:
-            logger.warning("Skipping instance %d in %s: %s", instance_id, mask_file, exc)
-            continue
-
-        keypoints = [round(ir_x), round(ir_y), 2]
-
-        if category_id in MULTIPOLYGON_IDS:
-            multi_poly = MultiPolygon(polygons)
-            annotation = create_annotation_format(
-                multi_poly, segmentations, image_id, keypoints, category_id, annotation_id
-            )
-        else:
-            for poly in polygons:
-                seg = [np.array(poly.exterior.coords).ravel().tolist()]
-                annotation = create_annotation_format(
-                    poly, seg, image_id, keypoints, category_id, annotation_id
-                )
-        break  # one annotation template is enough
-
-    if annotation is None:
-        raise RuntimeError(
-            f"Could not derive any annotation from mask at {mask_path}"
-        )
-
-    # ---- Iterate over source images ----------------------------------------
     images = []
     annotations = []
 
@@ -183,7 +149,7 @@ def build_images_and_annotations(
         )
         images.append(image)
 
-        ann = dict(annotation)  # copy, then stamp with correct ids
+        ann = dict(template)
         ann["image_id"] = image_id
         ann["id"] = annotation_id
         annotations.append(ann)
@@ -199,22 +165,21 @@ def build_images_and_annotations(
 # ---------------------------------------------------------------------------
 def create_annotation_json(
     sbid: str,
-    mask_path: str,
     all_sbs_dir: str = "data/all_SBs",
-    annotations_dir: str = "data/annotations",
+    cutout_size: int = 240,
 ) -> None:
-    image_path = os.path.join(all_sbs_dir, sbid, "All2017")
-    out_dir = annotations_dir
-    out_file = os.path.join(out_dir, f"instances_angle_{sbid}.json")
+    sb_dir     = os.path.join(all_sbs_dir, sbid)
+    image_path = os.path.join(sb_dir, "All2017")
+    out_file   = os.path.join(sb_dir, f"instances_angle_{sbid}.json")
 
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(sb_dir, exist_ok=True)
 
     coco_format = get_coco_json_format()
     coco_format["categories"] = create_category_annotation(CATEGORY_IDS)
 
     logger.info("Building annotations for SBid %s", sbid)
     coco_format["images"], coco_format["annotations"], annotation_cnt = \
-        build_images_and_annotations(mask_path, image_path)
+        build_images_and_annotations(image_path, cutout_size)
 
     with open(out_file, "w") as f:
         json.dump(coco_format, f)
@@ -247,9 +212,7 @@ def main() -> None:
     try:
         create_annotation_json(
             sbid=sbid,
-            mask_path=args.mask_path,
             all_sbs_dir=args.all_sbs_dir,
-            annotations_dir=args.annotations_dir,
         )
     except (FileNotFoundError, RuntimeError) as exc:
         logger.error("%s", exc)
