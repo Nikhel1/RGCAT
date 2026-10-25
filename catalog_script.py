@@ -114,6 +114,8 @@ def run_command(command: str, sbid: str, stage: str) -> None:
 # Template for the Gal-DINO inference SLURM script.
 # Uses Python string.Template so ${var} placeholders are substituted at
 # runtime — no f-string interpolation confusion.
+#SBATCH --mail-type=${mail_type}
+#SBATCH --mail-user=${mail_user}
 _SLURM_TEMPLATE = Template("""\
 #!/bin/bash -l
 #SBATCH --account=${account}
@@ -124,8 +126,6 @@ _SLURM_TEMPLATE = Template("""\
 #SBATCH --time=${time}
 #SBATCH --cpus-per-task=${cpus_per_task}
 #SBATCH --gres=${gres}
-#SBATCH --mail-type=${mail_type}
-#SBATCH --mail-user=${mail_user}
 #SBATCH --output=${log_dir}/galdino_${sbid}_%j.out
 
 # --- Environment setup -------------------------------------------------------
