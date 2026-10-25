@@ -200,8 +200,8 @@ def radio_preprocess(
 
 def wise_preprocess(data: np.ndarray, wpmask: int = 2) -> np.ndarray:
     """Log-scale normalise WISE IR emission islands above median + 3×MAD."""
-    med = np.median(data)
-    mad = np.median(np.abs(data - med))
+    med = np.nanmedian(data)
+    mad = np.nanmedian(np.abs(data - med))
     noise = med + 3 * mad
 
     img_scale = np.zeros_like(data)
