@@ -5,6 +5,7 @@
 # --- Data (too large for git; mount at runtime or use DVC/S3) ---------------
 data/
 outputs/
+outputs_gal/
 logs/
 
 # Specific large files that might slip in
