@@ -93,7 +93,7 @@ galdino:
 # SLURM  (used by catalog_script.py when running on a cluster)
 # ---------------------------------------------------------------------------
 slurm:
-  account: "OD-231147"
+  account: "OD-241663"
   mail_user: "nikhel.gupta@csiro.au"
   mail_type: "ALL"
   poll_interval_seconds: 30   # how often to poll squeue for job completion
