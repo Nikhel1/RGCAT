@@ -61,6 +61,7 @@ credentials.json
 temp_slurm_script.sh
 slurm-*.out
 *.sbatch.tmp
+nohup*
 
 # --- Build artefacts from CUDA ops compilation -------------------------------
 galdino/models/dino/ops/build/
