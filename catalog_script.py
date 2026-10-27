@@ -114,8 +114,6 @@ def run_command(command: str, sbid: str, stage: str) -> None:
 # Template for the Gal-DINO inference SLURM script.
 # Uses Python string.Template so ${var} placeholders are substituted at
 # runtime — no f-string interpolation confusion.
-#SBATCH --mail-type=${mail_type}
-#SBATCH --mail-user=${mail_user}
 _SLURM_TEMPLATE = Template("""\
 #!/bin/bash -l
 #SBATCH --account=${account}
@@ -127,7 +125,7 @@ _SLURM_TEMPLATE = Template("""\
 #SBATCH --cpus-per-task=${cpus_per_task}
 #SBATCH --gres=${gres}
 #SBATCH --output=${log_dir}/galdino_${sbid}_%j.out
-
+${mail_lines}
 # --- Environment setup -------------------------------------------------------
 source ~/.bashrc
 conda activate ${conda_env}
@@ -334,6 +332,22 @@ def process_tile(
                 module_load_line = (
                     f"module load {cuda_module}" if cuda_module else ""
                 )
+                # Build optional mail directives — only included when both
+                # mail_user and mail_type are set in the YAML config.
+                mail_user = slurm.get("mail_user", "").strip() if slurm.get("mail_user") else ""
+                mail_type = slurm.get("mail_type", "").strip() if slurm.get("mail_type") else ""
+                if mail_user and mail_type:
+                    mail_lines = (
+                        f"#SBATCH --mail-user={mail_user}\n"
+                        f"#SBATCH --mail-type={mail_type}"
+                    )
+                    logger.info(
+                        "[SB%s] SLURM mail notifications → %s (%s)",
+                        sbid, mail_user, mail_type,
+                    )
+                else:
+                    mail_lines = ""
+
                 slurm_script = _SLURM_TEMPLATE.substitute(
                     account         = slurm["account"],
                     sbid            = sbid,
@@ -343,8 +357,7 @@ def process_tile(
                     time            = slurm["inference"]["time"],
                     cpus_per_task   = slurm["inference"]["cpus_per_task"],
                     gres            = slurm["inference"]["gres"],
-                    mail_type       = slurm["mail_type"],
-                    mail_user       = slurm["mail_user"],
+                    mail_lines      = mail_lines,
                     log_dir         = paths["log_dir"],
                     conda_env       = slurm.get("conda_env", ""),
                     module_load_line= module_load_line,

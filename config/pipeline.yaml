@@ -97,8 +97,9 @@ galdino:
 # ---------------------------------------------------------------------------
 slurm:
   account: "OD-241663"
-  #mail_user: "xx@gmail.com"
-  #mail_type: "ALL"
+  # Optional: uncomment to receive SLURM email notifications for each job.
+  # mail_user: "xx@gmail.com"
+  # mail_type: "ALL"   # ALL | BEGIN | END | FAIL
   poll_interval_seconds: 30   # how often to poll squeue for job completion
 
   # Conda environment name to activate inside the SLURM job
