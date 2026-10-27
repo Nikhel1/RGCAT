@@ -21,8 +21,6 @@ import os
 import re
 import sys
 
-import numpy as np
-from shapely.geometry import MultiPolygon, Polygon
 
 from src.create_annotations import (
     create_annotation_format,
@@ -57,6 +55,24 @@ CATEGORY_IDS = {
 # All classes are treated as (possibly) multi-polygon
 MULTIPOLYGON_IDS = list(range(1, 8))
 
+# Fixed template annotation body — derived from the reference mask PNG used in
+# the original create_fake_json_All_fits.py (J210342.7-554258_rgb.png).
+# Every source gets the same stub annotation; Gal-DINO replaces these at
+# inference time.  Values must stay constant to produce identical JSON output.
+_TEMPLATE_SEGMENTATION = [[
+    138.0, 136.5, 133.0, 135.5, 124.0, 128.5, 107.0, 125.5, 100.5, 116.0,
+    96.5,  113.0, 95.5,  107.0, 97.5,  103.0, 103.5, 98.0,  101.5, 95.0,
+    101.5, 90.0,  103.0, 88.5,  107.0, 88.5,  109.5, 91.0,  109.5, 99.0,
+    116.5, 103.0, 118.5, 109.0, 117.5, 113.0, 124.0, 120.5, 132.0, 121.5,
+    135.0, 119.5, 141.5, 120.0, 143.5, 128.0, 140.5, 135.0, 138.0, 136.5,
+]]
+_TEMPLATE_BBOX         = [95.5, 88.5, 48.0, 48.0]
+_TEMPLATE_AREA         = 2304.0
+_TEMPLATE_CATEGORY_ID  = 1
+_TEMPLATE_KEYPOINTS    = [120, 120, 2]
+_TEMPLATE_NUM_KP       = 1
+_TEMPLATE_ISCROWD      = 0
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -77,40 +93,13 @@ def get_args_parser() -> argparse.ArgumentParser:
         default="data/all_SBs",
         help="Working area for per-SBid cutouts (default: data/all_SBs)",
     )
-    return parser
-
-
-# ---------------------------------------------------------------------------
-# Synthetic annotation template
-# ---------------------------------------------------------------------------
-def _make_template_annotation(
-    cutout_size: int,
-    image_id: int = 1,
-    annotation_id: int = 1,
-    category_id: int = 6,  # S (Single) — a safe placeholder class
-) -> dict:
-    """
-    Build a fake COCO annotation without needing a reference mask PNG.
-
-    The annotation is a small square centred on the image, which is all
-    the downstream Gal-DINO inference code requires as a stub.
-    """
-    cx, cy = cutout_size / 2.0, cutout_size / 2.0
-    half = cutout_size / 8.0  # 1/4 of the image width
-
-    poly = Polygon([
-        (cx - half, cy - half),
-        (cx + half, cy - half),
-        (cx + half, cy + half),
-        (cx - half, cy + half),
-    ])
-    segmentation = [np.array(poly.exterior.coords).ravel().tolist()]
-    keypoints = [round(cx), round(cy), 2]
-
-    multi_poly = MultiPolygon([poly])
-    return create_annotation_format(
-        multi_poly, segmentation, image_id, keypoints, category_id, annotation_id
+    parser.add_argument(
+        "--emu_catalogs_dir",
+        type=str,
+        default="data/catalogs",
+        help="Directory containing selavy CSV catalogs (default: data/catalogs)",
     )
+    return parser
 
 
 # ---------------------------------------------------------------------------
@@ -118,44 +107,70 @@ def _make_template_annotation(
 # ---------------------------------------------------------------------------
 def build_images_and_annotations(
     image_path: str,
+    catalog_path: str,
     cutout_size: int = 240,
 ) -> tuple[list, list, int]:
     """
-    Build COCO 'images' and 'annotations' lists without a reference mask.
+    Build COCO 'images' and 'annotations' lists.
 
-    A synthetic centred-square annotation template is replicated for every
-    source image under *image_path*.
+    Images are ordered by catalog row order (matching the original pipeline's
+    glob-over-filesystem behaviour where files were written in catalog order).
+    Every source gets the same fixed stub annotation derived from the original
+    reference mask PNG — Gal-DINO replaces these at inference time.
+
+    Parameters
+    ----------
+    image_path   : directory containing *_rgb.png files
+    catalog_path : path to the selavy CSV catalog for this tile
+    cutout_size  : expected width/height of each cutout image
 
     Returns
     -------
     images, annotations, annotation_count
     """
+    import pandas as pd
+
+    # Load catalog to get canonical source ordering
+    tab = pd.read_csv(catalog_path, header=0)
+    # Support both old and new column naming conventions
+    if "ra_deg_cont" not in tab.columns and "ra_deg_radio" in tab.columns:
+        tab.rename(
+            columns={"ra_deg_radio": "ra_deg_cont", "dec_deg_radio": "dec_deg_cont"},
+            inplace=True,
+        )
+
+    w = h = cutout_size
     annotation_id = 1
     image_id = 1
-
-    template = _make_template_annotation(cutout_size, image_id, annotation_id)
-    w = h = cutout_size
-
     images = []
     annotations = []
 
-    image_files = sorted(glob.glob(os.path.join(image_path, "*rgb.png")))
-    if not image_files:
-        logger.warning("No *rgb.png images found in %s", image_path)
+    for _, row in tab.iterrows():
+        fname = f"{row['ra_deg_cont']}_{row['dec_deg_cont']}_rgb.png"
+        if not os.path.exists(os.path.join(image_path, fname)):
+            logger.debug("Skipping missing image: %s", fname)
+            continue
 
-    for img_file in image_files:
-        image = create_image_annotation(
-            os.path.basename(img_file), w, h, image_id
-        )
-        images.append(image)
+        images.append(create_image_annotation(fname, w, h, image_id))
 
-        ann = dict(template)
-        ann["image_id"] = image_id
-        ann["id"] = annotation_id
+        ann = {
+            "segmentation":   _TEMPLATE_SEGMENTATION,
+            "num_keypoints":  _TEMPLATE_NUM_KP,
+            "area":           _TEMPLATE_AREA,
+            "iscrowd":        _TEMPLATE_ISCROWD,
+            "image_id":       image_id,
+            "bbox":           _TEMPLATE_BBOX,
+            "keypoints":      _TEMPLATE_KEYPOINTS,
+            "category_id":    _TEMPLATE_CATEGORY_ID,
+            "id":             annotation_id,
+        }
         annotations.append(ann)
 
         annotation_id += 1
         image_id += 1
+
+    if not images:
+        logger.warning("No matching images found in %s", image_path)
 
     return images, annotations, annotation_id
 
@@ -165,6 +180,7 @@ def build_images_and_annotations(
 # ---------------------------------------------------------------------------
 def create_annotation_json(
     sbid: str,
+    catalog_path: str,
     all_sbs_dir: str = "data/all_SBs",
     cutout_size: int = 240,
 ) -> None:
@@ -179,7 +195,7 @@ def create_annotation_json(
 
     logger.info("Building annotations for SBid %s", sbid)
     coco_format["images"], coco_format["annotations"], annotation_cnt = \
-        build_images_and_annotations(image_path, cutout_size)
+        build_images_and_annotations(image_path, catalog_path, cutout_size)
 
     with open(out_file, "w") as f:
         json.dump(coco_format, f)
@@ -209,9 +225,21 @@ def main() -> None:
     sbid = sbmatch.group(1)
     logger.info("Working on SBid: %s", sbid)
 
+    # Locate catalog
+    pattern = os.path.join(args.emu_catalogs_dir, f"*{sbid}*.csv")
+    matches = glob.glob(pattern)
+    if not matches:
+        logger.error("No catalog CSV found matching: %s", pattern)
+        sys.exit(1)
+    if len(matches) > 1:
+        logger.warning("Multiple catalogs match SBid %s — using: %s", sbid, matches[0])
+    catalog_path = matches[0]
+    logger.info("Found catalog: %s", catalog_path)
+
     try:
         create_annotation_json(
             sbid=sbid,
+            catalog_path=catalog_path,
             all_sbs_dir=args.all_sbs_dir,
         )
     except (FileNotFoundError, RuntimeError) as exc:

@@ -337,61 +337,40 @@ def test(model, criterion, postprocessors, data_loader, base_ds, device, output_
         json_filename = f'/results{args.rank}_{args.data_eval}.json'
         if args.SBid:
             json_filename = f'/results{args.rank}_{args.data_eval}_{args.SBid}.json'
+
+        final_res = []
+        for samples, targets in metric_logger.log_every(data_loader, 10, header, logger=logger):
+            samples = samples.to(device)
+
+            targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
+
+            outputs = model(samples)
+
+            orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+            results = postprocessors['bbox'](outputs, orig_target_sizes, not_to_xyxy=False, test=args.is_test)
+            if 'segm' in postprocessors.keys():
+                target_sizes = torch.stack([t["size"] for t in targets], dim=0)
+                results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
+            if 'keypoints' in postprocessors.keys():
+                results = postprocessors['keypoints'](results, outputs, orig_target_sizes)
+            res = {target['image_id'].item(): output for target, output in zip(targets, results)}
+            for image_id, outputs in res.items():
+                _scores = outputs['scores'].tolist()
+                _labels = outputs['labels'].tolist()
+                _boxes = outputs['boxes'].tolist()
+                _keypoints = outputs['keypoints'].tolist()
+                for s, l, b, k in zip(_scores, _labels, _boxes, _keypoints):
+                    assert isinstance(l, int)
+                    if s > args.score_thresh:
+                        final_res.append({
+                            "image_id": int(image_id),
+                            "category_id": l,
+                            "bbox": b,
+                            "score": s,
+                            "keypoints": k,
+                        })
+
         with open(args.output_dir + json_filename, 'w') as f:
-            f.write("[")  
-            
-            for samples, targets in metric_logger.log_every(data_loader, 10, header, logger=logger):
-                samples = samples.to(device)
+            json.dump(final_res, f)
 
-                # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-                targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
-
-                outputs = model(samples)
-                # loss_dict = criterion(outputs, targets)
-                # weight_dict = criterion.weight_dict
-
-                # # reduce losses over all GPUs for logging purposes
-                # loss_dict_reduced = utils.reduce_dict(loss_dict)
-                # loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                #                             for k, v in loss_dict_reduced.items() if k in weight_dict}
-                # loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                #                               for k, v in loss_dict_reduced.items()}
-                # metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
-                #                      **loss_dict_reduced_scaled,
-                #                      **loss_dict_reduced_unscaled)
-                # if 'class_error' in loss_dict_reduced:
-                #     metric_logger.update(class_error=loss_dict_reduced['class_error'])
-
-                orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-                results = postprocessors['bbox'](outputs, orig_target_sizes, not_to_xyxy=False, test=args.is_test)
-                # [scores: [100], labels: [100], boxes: [100, 4]] x B
-                if 'segm' in postprocessors.keys():
-                    target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-                    results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
-                if 'keypoints' in postprocessors.keys():
-                    #target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-                    results = postprocessors['keypoints'](results, outputs, orig_target_sizes)
-                res = {target['image_id'].item(): output for target, output in zip(targets, results)}
-                for image_id, outputs in res.items():
-                    _scores = outputs['scores'].tolist()
-                    _labels = outputs['labels'].tolist()
-                    _boxes = outputs['boxes'].tolist()
-                    _keypoints = outputs['keypoints'].tolist()
-                    num_pred = 1
-                    for s, l, b, k in zip(_scores, _labels, _boxes, _keypoints):
-                        assert isinstance(l, int)
-                        if s > args.score_thresh:
-                            itemdict = {
-                                    "image_id": int(image_id), 
-                                    "category_id": l, 
-                                    "bbox": b, 
-                                    "score": s,
-                                    "keypoints": k
-                                    }
-                            #final_res.append(itemdict)
-                            json.dump(itemdict, f)
-                            if ((image_id < len(data_loader.dataset)) or (num_pred < len(np.array(_scores)[np.array(_scores)>args.score_thresh]))):
-                                f.write(",")
-                            num_pred+=1  
-            f.write("]")
     return final_res

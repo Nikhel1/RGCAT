@@ -264,8 +264,14 @@ def preprocess_source(
         return None
     dlist.close()
 
-    # Raw radio data (for FITS output)
-    e_raw = e_new_data.astype(np.float32)
+    # Raw radio data (for FITS output).
+    # Zero out non-finite values on a copy — the original code zeroed NaNs
+    # AFTER radio_preprocess (at the end of preprocessing()), so e_new_data
+    # still has NaNs when radio_preprocess is called.  We must not modify
+    # e_new_data here or radio_preprocess will receive different input.
+    e_raw = e_new_data.copy()
+    e_raw[~np.isfinite(e_raw)] = 0.0
+    e_raw = e_raw.astype(np.float32)
 
     # Preprocessed radio data
     e_proc = radio_preprocess(e_new_data, epmask, lower, outer_pixels)
@@ -274,11 +280,11 @@ def preprocess_source(
         return None
 
     # ---- WISE --------------------------------------------------------------
-    # Download_allSources writes reprojected WISE cutouts as *_wise_repo.fits.
-    # The intermediate *_wise.fits only exists if reprojection was not needed.
-    wise_src = os.path.join(inpath_wise, f"{src_id}_wise_repo.fits")
-    if not os.path.exists(wise_src):
-        wise_src = os.path.join(inpath_wise, f"{src_id}_wise.fits")
+    # The original code loaded _wise.fits (the raw WISE cutout) and reprojected
+    # it once onto the radio WCS here.  Loading _wise_repo.fits (which is
+    # already reprojected) and reprojecting again causes double-reprojection
+    # and changes pixel values.  Always load _wise.fits.
+    wise_src = os.path.join(inpath_wise, f"{src_id}_wise.fits")
     try:
         wlist = fits.open(wise_src)
         w = wlist[0]

@@ -162,17 +162,25 @@ def make_wise_cutout(
     cutout_size: int,
     img_wise_data: np.ndarray,
     wcs_wise: WCS,
+    img_wise_header: fits.Header,
     radio_wcs: WCS,
     radio_shape: tuple,
     wise_outpath: str,
+    radio_outpath: str,
 ) -> bool:
     """
     Extract a WISE IR cutout centred on *pos*, reproject to match the radio
-    cutout WCS, and write the reprojected result to *wise_outpath*.
+    cutout WCS, and write both the intermediate WISE cutout (``wise_outpath``)
+    and the reprojected result (``wise_outpath`` with ``_repo`` suffix).
 
-    Unlike the original implementation this avoids writing an intermediate
-    WISE FITS file and re-opening both the radio and WISE files from disk —
-    the WCS and data needed for reprojection are passed in-memory.
+    Header construction mirrors the original behaviour:
+      1. Start from the WISE mosaic header (preserves PC-matrix, CROTA2,
+         COMMENT and other WISE-specific keys).
+      2. Update with the cutout WCS to_header() for the intermediate file.
+      3. For the reprojected file, start from that same intermediate header
+         and update with the radio WCS to_header() — keys present in the
+         WISE header but absent from the radio WCS header (e.g. PC1_1,
+         PC1_2, PC2_1, PC2_2, CROTA2, COMMENT) are preserved unchanged.
 
     Returns True on success, False on any failure.
     """
@@ -193,14 +201,31 @@ def make_wise_cutout(
         return False
 
     try:
-        # Reproject WISE cutout onto the radio cutout WCS — all in-memory
-        arr, _ = reproject_interp(
-            (d_wise.data, d_wise.wcs), radio_wcs, shape_out=radio_shape,
-        )
+        # --- intermediate wise.fits (matches old behaviour) -----------------
+        tmp = img_wise_header.copy()
+        tmp.update(d_wise.wcs.to_header())
+        fits.writeto(wise_outpath, d_wise.data, tmp, overwrite=True)
 
-        out_header = radio_wcs.to_header()
+        # --- reprojected wise_repo.fits -------------------------------------
+        # Re-open wise.fits and the radio cutout from disk, exactly as the
+        # original code did, so the reproject input and output header are
+        # derived from the same on-disk files.
+        wise_hdu = fits.open(wise_outpath)[0]
+        first_hdu = fits.open(radio_outpath)[0]
+
+        arr, _ = reproject_interp(wise_hdu, WCS(first_hdu.header).celestial,
+                                  shape_out=first_hdu.data.shape)
+
+        # Build output header: start from wise header, then update with
+        # the radio cutout's celestial WCS.  Keys in the wise header that
+        # are NOT present in the radio WCS to_header() (e.g. PC1_1, PC1_2,
+        # PC2_1, PC2_2, CROTA2, COMMENT) survive unchanged — exactly as in
+        # the original code where `tmp2 = wise.header; tmp2.update(...)`.
+        tmp2 = wise_hdu.header.copy()
+        tmp2.update(WCS(first_hdu.header).celestial.to_header())
+
         repo_path = wise_outpath.replace(".fits", "_repo.fits")
-        fits.writeto(repo_path, arr, out_header, overwrite=True)
+        fits.writeto(repo_path, arr, tmp2, overwrite=True)
         return True
 
     except Exception as exc:
@@ -225,6 +250,10 @@ def _init_worker(emu_tile_path: str, wise_tile_path: str) -> None:
     _worker_state["wcs"] = WCS(_worker_state["img"][0].header)
     _worker_state["img_wise"] = fits.open(wise_tile_path, relax=True)
     _worker_state["wcs_wise"] = WCS(_worker_state["img_wise"][0].header)
+    # Store the WISE mosaic header so make_wise_cutout can seed the output
+    # header with WISE-specific keys (PC matrix, CROTA2, COMMENT, etc.),
+    # matching the behaviour of the original Download_allSources.py.
+    _worker_state["img_wise_header"] = _worker_state["img_wise"][0].header.copy()
 
 
 def _process_source(
@@ -258,6 +287,7 @@ def _process_source(
     wcs = _worker_state["wcs"]
     img_wise = _worker_state["img_wise"]
     wcs_wise = _worker_state["wcs_wise"]
+    img_wise_header = _worker_state["img_wise_header"]
 
     img_size = (cutout_size, cutout_size)
 
@@ -306,9 +336,11 @@ def _process_source(
             cutout_size=cutout_size,
             img_wise_data=img_wise[0].data.squeeze(),
             wcs_wise=wcs_wise,
+            img_wise_header=img_wise_header,
             radio_wcs=radio_cutout_wcs,
             radio_shape=radio_cutout_data.shape,
             wise_outpath=wise_outpath,
+            radio_outpath=radio_outpath,
         )
         if success:
             result["wise_ok"] = True
