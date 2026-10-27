@@ -79,7 +79,9 @@ data/
 │       └── instances_angle_<SBid>.json   # COCO annotation stub (generated)
 └── annotations/         # fixed calibration JSONs for score recalibration
     ├── instances_train2017.json           # (optional — see note below)
-    └── instances_val2017.json
+    ├── instances_val2017.json
+    ├── results0_train.json                # Gal-DINO predictions on train set
+    └── results0_val.json                  # Gal-DINO predictions on val set
 outputs/
 └── CatV1/               # Gal-DINO predictions + checkpoint
 ```

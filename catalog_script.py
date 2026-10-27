@@ -237,7 +237,7 @@ def process_tile(
     logger.info("[SB%s] Processing %s", sbid, tile_filename)
 
     pipeline_dir    = "pipeline"
-    annotations_dir = paths["annotations_dir"]
+    score_calib_dir = paths["score_calib_dir"]
     output_dir      = paths["output_dir"]
     all_sbs_dir     = paths["all_sbs_dir"]
 
@@ -414,7 +414,7 @@ def process_tile(
                     f" --emu_images_dir {paths['emu_images_dir']}"
                     f" --emu_catalogs_dir {paths['emu_catalogs_dir']}"
                     f" --all_sbs_dir {all_sbs_dir}"
-                    f" --shared_annotations_dir {annotations_dir}"
+                    f" --shared_annotations_dir {score_calib_dir}"
                     f" --output_dir {galdino_out_dir}"
                 ),
                 sbid, "get_consol_cat",

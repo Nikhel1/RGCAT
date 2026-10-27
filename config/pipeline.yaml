@@ -25,9 +25,10 @@ paths:
   # Working area: per-SBid cutouts and preprocessed files
   all_sbs_dir: "data/all_SBs"
 
-  # Shared COCO annotation JSONs (train/val calibration stubs for get_consol_cat.py).
-  # Per-tile annotation JSONs are written to all_sbs_dir/<SBid>/ instead.
-  annotations_dir: "data/annotations"
+  # Score calibration files for get_consol_cat.py spline recalibration:
+  #   instances_train2017.json, instances_val2017.json
+  #   results0_train.json, results0_val.json
+  score_calib_dir: "outputs/CatV1/score_calib_files"
 
   # Gal-DINO inference outputs  (results0_all_<SBid>.json, checkpoints)
   output_dir: "outputs/CatV1"

@@ -121,11 +121,11 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--shared_annotations_dir",
         type=str,
-        default="data/annotations",
+        default="outputs/CatV1/score_calib_files",
         help=(
-            "Directory containing shared COCO annotation stubs "
-            "(train/val calibration JSONs). Per-tile annotation is read "
-            "from all_sbs_dir/<SBid>/ (default: data/annotations)"
+            "Directory containing score calibration files "
+            "(instances_train/val2017.json + results0_train/val.json). "
+            "(default: outputs/CatV1/score_calib_files)"
         ),
     )
     parser.add_argument(
@@ -455,9 +455,9 @@ def run_consolidation(
     frecal = None
     if calibrate_score:
         gt_train  = os.path.join(shared_annotations_dir, "instances_train2017.json")
-        res_train = os.path.join(output_dir, "results0_train.json")
+        res_train = os.path.join(shared_annotations_dir, "results0_train.json")
         gt_val    = os.path.join(shared_annotations_dir, "instances_val2017.json")
-        res_val   = os.path.join(output_dir, "results0_val.json")
+        res_val   = os.path.join(shared_annotations_dir, "results0_val.json")
 
         missing = [p for p in (gt_train, res_train, gt_val, res_val)
                    if not os.path.exists(p)]
@@ -776,14 +776,18 @@ def run_consolidation(
                 tab["ra_deg_cont"].values * u.deg,
                 tab["dec_deg_cont"].values * u.deg,
             )
-            tab_consolidated = pd.concat([tab_consolidated, tab1_c], ignore_index=True)
+            tab_consolidated = pd.concat(
+                [tab_consolidated.dropna(axis=1, how="all"),
+                 tab1_c.dropna(axis=1, how="all")],
+                ignore_index=True,
+            )
 
             # Incremental save
             tab1_c.to_csv(
                 os.path.join(cons_dir, f"consolidated_catalog{cat_version}.csv"),
                 mode="a", header=False, index=False,
             )
-            logger.info(
+            logger.debug(
                 "[%d] image_id=%d type=%s score=%.3f n_selavy=%d",
                 _idx, image_id, cat_label, sorted_scores[image_id], len(tab1),
             )
