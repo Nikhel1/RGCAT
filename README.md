@@ -76,7 +76,7 @@ data/
 │   ├── instances_val2017.json
 │   ├── results0_train.json                # Gal-DINO predictions on train set
 │   └── results0_val.json                  # Gal-DINO predictions on val set
-└── all_SBs/             # per-tile working area (generated)
+└── all_SBs/             # per-tile working area (generated; deleted after each tile succeeds)
     └── <SBid>/
         ├── All_Images_8arcmV1/           # radio cutouts
         ├── All_Images_8arcmV1_wise/      # WISE cutouts
@@ -103,6 +103,10 @@ outputs/
 > enabled (the default). It holds the two fixed train/val annotation JSONs
 > used to fit the spline recalibrator in `get_consol_cat.py`. If these files
 > are not available, pass `--no_calibrate_score` to `get_consol_cat.py`.
+
+> `data/all_SBs/<SBid>/` is deleted automatically in the background by
+> `catalog_script.py` once all stages for that tile complete successfully.
+> Failed tiles are left on disk to allow inspection and re-run.
 
 ---
 

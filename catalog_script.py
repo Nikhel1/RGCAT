@@ -32,8 +32,10 @@ import glob
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from string import Template
 
@@ -105,6 +107,29 @@ def run_command(command: str, sbid: str, stage: str) -> None:
         raise RuntimeError(
             f"{stage} exited with code {proc.returncode} for SBid {sbid}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Background cleanup
+# ---------------------------------------------------------------------------
+def cleanup_sb_dir(sb_dir: str, sbid: str) -> threading.Thread:
+    """Delete *sb_dir* in a background thread and return the Thread object.
+
+    The caller should keep a reference and join() it before the process exits
+    to avoid orphaned threads.  Errors are logged but never propagated — a
+    cleanup failure must not affect the pipeline result.
+    """
+    def _delete() -> None:
+        try:
+            shutil.rmtree(sb_dir)
+            logger.info("[SB%s] Cleaned up %s", sbid, sb_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[SB%s] Cleanup of %s failed: %s", sbid, sb_dir, exc)
+
+    t = threading.Thread(target=_delete, daemon=True, name=f"cleanup-{sbid}")
+    t.start()
+    logger.info("[SB%s] Background cleanup started for %s", sbid, sb_dir)
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +226,7 @@ def process_tile(
     tile_filename: str,
     cfg: dict,
     failed_tiles: list,
+    cleanup_threads: list,
 ) -> None:
     """Run all pipeline stages for one EMU tile filename."""
 
@@ -430,27 +456,33 @@ def process_tile(
             logger.info(
                 "[SB%s] In skip_value_added list — skipping value-added", sbid
             )
-            return
-
-        va_sentinel = os.path.join(
-            galdino_out_dir, "cons_catalogs",
-            "value_added_catwise_ls_allExtended.fits",
-        )
-        if not os.path.exists(va_sentinel):
-            run_command(
-                (
-                    f"python {pipeline_dir}/value_added_cat.py"
-                    f" --SBid {sbid}"
-                    f" --output_dir {galdino_out_dir}"
-                    f" --wise_catalogs_dir {paths['wise_catalogs_dir']}"
-                    f" --desi_catalogs_dir {paths['desi_catalogs_dir']}"
-                ),
-                sbid, "value_added_cat",
-            )
         else:
-            logger.info(
-                "[SB%s] Value-added catalogue exists — skipping", sbid
+            va_sentinel = os.path.join(
+                galdino_out_dir, "cons_catalogs",
+                "value_added_catwise_ls_allExtended.fits",
             )
+            if not os.path.exists(va_sentinel):
+                run_command(
+                    (
+                        f"python {pipeline_dir}/value_added_cat.py"
+                        f" --SBid {sbid}"
+                        f" --output_dir {galdino_out_dir}"
+                        f" --wise_catalogs_dir {paths['wise_catalogs_dir']}"
+                        f" --desi_catalogs_dir {paths['desi_catalogs_dir']}"
+                    ),
+                    sbid, "value_added_cat",
+                )
+            else:
+                logger.info(
+                    "[SB%s] Value-added catalogue exists — skipping", sbid
+                )
+
+        # ------------------------------------------------------------------ #
+        # Cleanup — delete the per-tile working directory in the background   #
+        # ------------------------------------------------------------------ #
+        sb_dir = os.path.join(all_sbs_dir, sbid)
+        if os.path.exists(sb_dir):
+            cleanup_threads.append(cleanup_sb_dir(sb_dir, sbid))
 
     except RuntimeError as exc:
         logger.error("[SB%s] Stage failed: %s", sbid, exc)
@@ -497,8 +529,13 @@ def main() -> None:
         logger.info("Found %d tiles to process", len(tiles))
 
     failed_tiles: list = []
+    cleanup_threads: list = []
     for tile_filename in tiles:
-        process_tile(tile_filename, cfg, failed_tiles)
+        process_tile(tile_filename, cfg, failed_tiles, cleanup_threads)
+
+    # Wait for any background cleanup threads to finish before exiting
+    for t in cleanup_threads:
+        t.join()
 
     if failed_tiles:
         logger.warning(
