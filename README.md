@@ -70,27 +70,36 @@ data/
 ├── images/              # EMU FITS tiles
 ├── images_wise/         # WISE mosaics
 ├── catalogs/            # selavy CSV catalogs
-├── all_SBs/             # per-tile working area (generated)
-│   └── <SBid>/
-│       ├── All_Images_8arcmV1/           # radio cutouts
-│       ├── All_Images_8arcmV1_wise/      # WISE cutouts
-│       ├── All2017/                      # RGB PNGs (preprocessed)
-│       ├── All_fits/                     # preprocessed radio FITS
-│       └── instances_angle_<SBid>.json   # COCO annotation stub (generated)
-└── annotations/         # fixed calibration JSONs for score recalibration
-    ├── instances_train2017.json           # (optional — see note below)
-    ├── instances_val2017.json
-    ├── results0_train.json                # Gal-DINO predictions on train set
-    └── results0_val.json                  # Gal-DINO predictions on val set
+├── checkpoint.pth       # trained Gal-DINO model checkpoint
+├── score_calib_files/   # score calibration files for spline recalibration
+│   ├── instances_train2017.json           # (optional — see note below)
+│   ├── instances_val2017.json
+│   ├── results0_train.json                # Gal-DINO predictions on train set
+│   └── results0_val.json                  # Gal-DINO predictions on val set
+└── all_SBs/             # per-tile working area (generated)
+    └── <SBid>/
+        ├── All_Images_8arcmV1/           # radio cutouts
+        ├── All_Images_8arcmV1_wise/      # WISE cutouts
+        ├── All2017/                      # RGB PNGs (preprocessed)
+        ├── All_fits/                     # preprocessed radio FITS
+        └── instances_angle_<SBid>.json   # COCO annotation stub (generated)
 outputs/
-└── CatV1/               # Gal-DINO predictions + checkpoint
+└── CatV1/               # Gal-DINO inference outputs (per-tile)
+    └── <SBid>/
+        ├── results0_all_<SBid>.json   # raw Gal-DINO detections
+        ├── config_args_all.json       # full resolved config used at inference
+        ├── config_args_raw.json       # raw CLI config args
+        ├── config_cfg.py              # GalDINO model config snapshot
+        ├── info.txt                   # inference run log / stats
+        ├── cons_catalogs/             # consolidated & value-added catalogues
+        └── region_files/              # DS9 region files per class
 ```
 
 > `data/Allmask/` is no longer required. The per-tile COCO annotation stub
 > is generated synthetically on the fly by `create_fake_json_All_fits.py`
 > and written directly into `all_SBs/<SBid>/`.
 
-> `data/annotations/` is only needed when confidence score recalibration is
+> `data/score_calib_files/` is only needed when confidence score recalibration is
 > enabled (the default). It holds the two fixed train/val annotation JSONs
 > used to fit the spline recalibrator in `get_consol_cat.py`. If these files
 > are not available, pass `--no_calibrate_score` to `get_consol_cat.py`.

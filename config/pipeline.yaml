@@ -28,13 +28,13 @@ paths:
   # Score calibration files for get_consol_cat.py spline recalibration:
   #   instances_train2017.json, instances_val2017.json
   #   results0_train.json, results0_val.json
-  score_calib_dir: "outputs/CatV1/score_calib_files"
+  score_calib_dir: "data/score_calib_files"
 
   # Gal-DINO inference outputs  (results0_all_<SBid>.json, checkpoints)
   output_dir: "outputs/CatV1"
 
   # Trained Gal-DINO model checkpoint
-  dino_checkpoint: "outputs/CatV1/checkpoint.pth"
+  dino_checkpoint: "data/checkpoint.pth"
 
   # Log files
   log_dir: "logs"
