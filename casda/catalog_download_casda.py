@@ -4,7 +4,8 @@
 Download EMU selavy component catalogues from CASDA, convert XML → CSV.
 
 CASDA files:  selavy-image.i.EMU_*.SB<SBID>.cont.taylor.0.restored.conv.components.xml
-Local output: ../data/catalogs/AS201_Continuum_Component_Catalogue_<SBID>_<SBID>.csv
+Local output: data/catalogs/AS201_Continuum_Component_Catalogue_<SBID>_<SBID>.csv
+              (relative to the repo root, RGCAT/)
 
 Already-present SBIDs are skipped.  XML files are removed after successful conversion.
 """
@@ -28,7 +29,11 @@ from astroquery.utils.tap.core import TapPlus
 # Suppress harmless VOTable unit warnings from CASDA staging responses
 warnings.filterwarnings("ignore", category=W50)
 
-CATALOG_DIR = Path("../data/catalogs")
+# Anchor to the repo root (RGCAT/) regardless of the current working directory
+# the script is invoked from, matching the path convention used by
+# config/pipeline.yaml and the other casda/ download scripts.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CATALOG_DIR = REPO_ROOT / "data/catalogs"
 CATALOG_DIR.mkdir(parents=True, exist_ok=True)
 
 CAT_PATTERN = "selavy-image.i.EMU*taylor.0.restored.conv.components.xml"

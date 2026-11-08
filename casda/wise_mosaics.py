@@ -22,6 +22,7 @@ import glob
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -202,26 +203,96 @@ def _remove_files_keep_nfs(dir_path: Path) -> None:
                 pass
 
 
+def _kill_nfs_lock_holders(dir_path: Path) -> None:
+    """
+    Use lsof to find processes holding .nfs lock files under *dir_path* and
+    send them SIGTERM so the kernel can release the locks.
+    Silently skips if lsof is not available.
+    """
+    import shutil as _shutil
+    import signal
+    if not _shutil.which("lsof"):
+        return
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["lsof", "+D", str(dir_path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        pids = set()
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                pids.add(int(parts[1]))
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if pids:
+            time.sleep(1)  # give processes a moment to release locks
+    except Exception:
+        pass
+
+
 def cleanup_scratch(outdir: Path) -> None:
-    """Remove the per-tile scratch directory and the _area sidecar file."""
+    """Remove the per-tile scratch directory and the _area sidecar file.
+
+    Strategy:
+    1. Delete all regular files except .nfs lock files (these are OS lock
+       handles, not copies of data — typically a few bytes each).
+    2. Try shutil.rmtree on the directory.
+    3. If that fails because .nfs locks remain, use lsof to find and SIGTERM
+       the processes holding them, then retry rmtree.
+    4. If locks still remain after the retry, leave the (now empty-except-
+       for-locks) directory — it uses negligible space and the shell wrapper
+       will clean it up before the next attempt.
+    """
     area_file = Path(str(outdir).rstrip("/") + "_mosaic_area.fits")
+
+    # Step 1: remove all real files (GBs of unWISE FITS + intermediates)
     _remove_files_keep_nfs(outdir)
 
     def _onerror(func, path, _exc):
-        os.chmod(path, 0o777)
-        func(path)
+        try:
+            os.chmod(path, 0o777)
+            func(path)
+        except OSError:
+            pass
 
     if outdir.is_dir():
+        # Step 2: first rmtree attempt
         try:
             shutil.rmtree(outdir, onerror=_onerror)
-        except Exception as e:
-            print(f"  Warning: could not fully remove {outdir}: {e}")
+        except Exception:
+            # Step 3: kill lock holders and retry
+            _kill_nfs_lock_holders(outdir)
+            try:
+                shutil.rmtree(outdir, onerror=_onerror)
+            except Exception:
+                # Step 4: only .nfs stubs remain — negligible size, leave them
+                nfs_count = sum(
+                    1 for p in outdir.rglob("*")
+                    if p.is_file() and p.name.startswith(".nfs")
+                )
+                other = [
+                    p for p in outdir.rglob("*")
+                    if p.is_file() and not p.name.startswith(".nfs")
+                ]
+                if other:
+                    print(f"  Warning: {len(other)} unexpected file(s) remain "
+                          f"in {outdir.name} after cleanup.")
+                else:
+                    # Truly just NFS stubs — safe to leave, log quietly
+                    print(f"  Note: {nfs_count} NFS lock stub(s) remain in "
+                          f"{outdir.name} — will be cleaned up by the shell "
+                          f"wrapper before the next run.")
 
     if area_file.is_file():
         try:
             area_file.unlink()
         except Exception as e:
-            print(f"  Warning: could not remove {area_file}: {e}")
+            print(f"  Warning: could not remove {area_file.name}: {e}")
 
 
 # ---------------------------------------------------------------------------

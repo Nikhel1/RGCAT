@@ -89,7 +89,7 @@ while true; do
     echo ""
     echo "--- Attempt ${attempt} / ${MAX_RETRIES} ---"
 
-    if python casda/wise_mosaics.py --config "${CONFIG}"; then
+    if python -u casda/wise_mosaics.py --config "${CONFIG}"; then
         echo ""
         echo "wise_mosaics.py completed successfully."
         cleanup_scratch_dirs

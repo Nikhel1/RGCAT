@@ -231,7 +231,7 @@ def run_step(step: dict, config: str, log_dir: Path, env: dict,
 
     if dry_run:
         print(_c("  [dry-run] skipping execution.", YELLOW))
-        return True, 0.0
+        return True, 0, 0.0
 
     t0 = time.monotonic()
     try:
@@ -257,6 +257,7 @@ def run_step(step: dict, config: str, log_dir: Path, env: dict,
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 log_fh.write(line)
+                log_fh.flush()
 
             proc.wait()
 
@@ -266,11 +267,12 @@ def run_step(step: dict, config: str, log_dir: Path, env: dict,
 
     except KeyboardInterrupt:
         print(_c("\n  Interrupted by user.", YELLOW))
-        return False, time.monotonic() - t0
+        return False, -1, time.monotonic() - t0
 
-    duration = time.monotonic() - t0
-    success  = proc.returncode == 0
-    return success, duration
+    duration  = time.monotonic() - t0
+    exit_code = proc.returncode
+    success   = exit_code == 0
+    return success, exit_code, duration
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +390,7 @@ def main():
         print_step_header(step)
         t0 = time.monotonic()
 
-        ok, duration = run_step(
+        ok, exit_code, duration = run_step(
             step=step,
             config=args.config,
             log_dir=log_dir,
@@ -402,9 +404,9 @@ def main():
                 mark_complete(state_file, state, step["name"], duration)
                 print(_c(f"\n  ✓ Step {step['id']} completed in {duration:.0f}s.", GREEN))
             else:
-                mark_failed(state_file, state, step["name"],
-                            getattr(step, "_exit_code", -1), duration)
-                print(_c(f"\n  ✗ Step {step['id']} FAILED after {duration:.0f}s.", RED))
+                mark_failed(state_file, state, step["name"], exit_code, duration)
+                print(_c(f"\n  ✗ Step {step['id']} FAILED (exit {exit_code}) "
+                          f"after {duration:.0f}s.", RED))
                 print(_c(f"    Stopping. Fix the issue and re-run — completed steps "
                           f"will be skipped automatically.", YELLOW))
                 results.append({"id": step["id"], "label": step["label"],

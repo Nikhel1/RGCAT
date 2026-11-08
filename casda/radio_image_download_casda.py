@@ -4,7 +4,7 @@
 Download EMU radio continuum FITS tiles from CASDA.
 
 CASDA files:  image.i.EMU_*.SB<SBID>.cont.taylor.0.restored.conv.fits
-Local output: ../data/images/<filename>
+Local output: data/images/<filename>   (relative to the repo root, RGCAT/)
 
 Already-present files are skipped.  Uses DataLink direct download (no async
 staging job) so it works for both public and project-accessible tiles.
@@ -27,7 +27,11 @@ from astroquery.utils.tap.core import TapPlus
 # Suppress harmless VOTable unit warnings
 warnings.filterwarnings("ignore", category=W50)
 
-IMAGE_DIR = Path("../data/images")
+# Anchor to the repo root (RGCAT/) regardless of the current working directory
+# the script is invoked from, matching the path convention used by
+# config/pipeline.yaml and the other casda/ download scripts.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+IMAGE_DIR = REPO_ROOT / "data/images"
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 PATTERN = "image.i.EMU*taylor.0.restored.conv.fits"
