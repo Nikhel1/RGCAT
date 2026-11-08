@@ -178,6 +178,11 @@ Downloads `image.i.EMU_*.cont.taylor.0.restored.conv.fits` files to
 `data/images/`.  Supports resume on partial downloads.  Embargoed tiles are
 skipped with a clear message.
 
+### Authentication
+
+Both these scripts prompt for OPAL (CASDA) credentials once per run.
+Create an account at <https://opal.atnf.csiro.au/> if you do not have one.
+
 ### 3. Generate WISE mosaics
 
 Requires the **Montage** C library and **MontagePy**.  See
@@ -192,11 +197,6 @@ Generates `data/images_wise/<stem>_wise_mosaic.fits` for each tile in
 `data/images/`.  The shell wrapper auto-retries on failure and cleans up
 scratch directories between attempts.  Tiles listed under `skip.bad_tiles` in
 `config/pipeline.yaml` are skipped automatically.
-
-### Authentication
-
-All three scripts prompt for OPAL (CASDA) credentials once per run.
-Create an account at <https://opal.atnf.csiro.au/> if you do not have one.
 
 ### 4. Download CatWISE-2020 and AllWISE catalogs
 
