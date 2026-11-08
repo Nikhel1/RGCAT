@@ -1,7 +1,8 @@
 # casda/ — CASDA Data Download Scripts
 
 This folder contains standalone scripts for downloading EMU data products from
-[CASDA](https://data.csiro.au) and generating WISE mosaics to accompany them.
+[CASDA](https://data.csiro.au), downloading external photometry and redshift
+catalogs, and generating WISE mosaics.
 Run all scripts from the **repo root** (one level up from this folder).
 
 ---
@@ -10,10 +11,12 @@ Run all scripts from the **repo root** (one level up from this folder).
 
 | Script | Purpose |
 |---|---|
-| `catalog_download_casda.py` | Download selavy component catalogues (XML → CSV) |
-| `radio_image_download_casda.py` | Download EMU FITS continuum tiles |
+| `catalog_download_casda.py` | Download selavy component catalogues from CASDA (XML → CSV) |
+| `radio_image_download_casda.py` | Download EMU FITS continuum tiles from CASDA |
 | `wise_mosaics.py` | Generate unWISE W1 mosaics for each EMU tile |
 | `wise_mosaics.sh` | Shell wrapper for `wise_mosaics.py` (auto-retry on failure) |
+| `download_catwise_allwise_catalogs.py` | Download CatWISE-2020 and AllWISE photometry from IRSA TAP |
+| `download_desi_catalogs.py` | Download DESI DR10 photometry and photo-z from NOIRLab DataLab TAP |
 
 ---
 
@@ -130,6 +133,62 @@ because:
 ```bash
 bash casda/wise_mosaics.sh [--config config/pipeline.yaml]
 ```
+
+---
+
+## download_catwise_allwise_catalogs.py
+
+Downloads CatWISE-2020 and AllWISE photometry catalogs from
+[IRSA TAP](https://irsa.ipac.caltech.edu/TAP) for every EMU tile.
+
+```bash
+python casda/download_catwise_allwise_catalogs.py [--config config/pipeline.yaml]
+```
+
+Options:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--config` | `config/pipeline.yaml` | Path to pipeline config |
+| `--buffer-deg` | `2.0` | Sky buffer around each tile footprint (degrees) |
+| `--retries` | `5` | TAP query retries on failure |
+| `--delay` | `10` | Seconds between retries |
+
+For each SBID produces:
+- `data/catalogs_wise/<SBID>_catwise_catalog.csv` — CatWISE-2020: positions and W1/W2 magnitudes
+- `data/catalogs_wise/<SBID>_allwise_catalog.csv` — AllWISE: positions and W1–W4 photometry
+
+Already-present files are skipped.  Uses a POINT-in-BOX ADQL query so it
+handles RA wrap-around correctly.  Requires internet access to IRSA.
+
+---
+
+## download_desi_catalogs.py
+
+Downloads DESI DR10 photometry and photometric-redshift catalogs from
+[NOIRLab DataLab TAP](https://datalab.noirlab.edu/tap).
+
+```bash
+python casda/download_desi_catalogs.py [--config config/pipeline.yaml]
+```
+
+Options:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--config` | `config/pipeline.yaml` | Path to pipeline config |
+| `--buffer-deg` | `2.0` | Sky buffer around each tile footprint (degrees) |
+| `--retries` | `5` | TAP query retries on failure |
+| `--delay` | `10` | Seconds between retries |
+| `--batch-size` | `10000` | `ls_id` batch size for photo-z queries |
+
+For each SBID produces:
+- `data/catalogs_desi/<SBID>_desi_dr10_catalog.csv` — positions, morphology, magnitudes (g/r/i/z/W1–W4), filtered to 15 < mag_r < 23 and mag_z < 22
+- `data/catalogs_desi/<SBID>_desi_dr10_z_catalog.csv` — photo-z: `z_phot_median`, `z_phot_median_i`, `z_phot_std_i`, `z_spec`
+
+The photo-z table is built by joining on `ls_id` values from the photometry
+table, queried in batches of `--batch-size` to avoid TAP result-size limits.
+Already-present files are skipped.
 
 ---
 

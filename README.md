@@ -33,6 +33,17 @@ EMU FITS tile  ──►  Download_allSources.py   (radio + WISE cutouts)
 `catalog_script.py` (repo root) orchestrates all stages, with idempotent
 checks so already-completed stages are skipped on re-run.
 
+Before running the pipeline, use the `casda/` scripts to download all required
+data products:
+
+```
+casda/catalog_download_casda.py            → data/catalogs/         (selavy CSVs)
+casda/radio_image_download_casda.py        → data/images/           (EMU FITS tiles)
+casda/wise_mosaics.sh                      → data/images_wise/      (unWISE W1 mosaics)
+casda/download_catwise_allwise_catalogs.py → data/catalogs_wise/    (CatWISE/AllWISE)
+casda/download_desi_catalogs.py            → data/catalogs_desi/    (DESI DR10 + photo-z)
+```
+
 ---
 
 ## Repository layout
@@ -48,11 +59,13 @@ RGCAT/
 │   ├── value_added_cat.py
 │   └── src/                   # COCO annotation helpers
 ├── casda/                     # ← CASDA data download scripts (run before pipeline)
-│   ├── catalog_download_casda.py      # download selavy component catalogues
-│   ├── radio_image_download_casda.py  # download EMU FITS tiles
-│   ├── wise_mosaics.py                # generate unWISE W1 mosaics
-│   ├── wise_mosaics.sh                # shell wrapper (auto-retry)
-│   └── README.md                      # installation + usage for casda scripts
+│   ├── catalog_download_casda.py              # download selavy component catalogues
+│   ├── radio_image_download_casda.py          # download EMU FITS tiles
+│   ├── wise_mosaics.py                        # generate unWISE W1 mosaics
+│   ├── wise_mosaics.sh                        # shell wrapper (auto-retry)
+│   ├── download_catwise_allwise_catalogs.py   # CatWISE-2020 + AllWISE from IRSA
+│   ├── download_desi_catalogs.py              # DESI DR10 photometry + photo-z
+│   └── README.md                              # installation + usage for casda scripts
 ├── galdino/                   # Gal-DINO detection framework
 │   ├── main.py
 │   ├── engine.py
@@ -164,6 +177,31 @@ scratch directories between attempts.  Tiles listed under `skip.bad_tiles` in
 
 All three scripts prompt for OPAL (CASDA) credentials once per run.
 Create an account at <https://opal.atnf.csiro.au/> if you do not have one.
+
+### 4. Download CatWISE-2020 and AllWISE catalogs
+
+```bash
+python casda/download_catwise_allwise_catalogs.py
+```
+
+Queries [IRSA TAP](https://irsa.ipac.caltech.edu/TAP) for CatWISE-2020 and
+AllWISE photometry covering each EMU tile footprint (plus a 2° buffer).
+Saves `data/catalogs_wise/<SBID>_catwise_catalog.csv` and
+`data/catalogs_wise/<SBID>_allwise_catalog.csv`.
+No authentication required — IRSA is publicly accessible.
+
+### 5. Download DESI DR10 photometry and photo-z
+
+```bash
+python casda/download_desi_catalogs.py
+```
+
+Queries [NOIRLab DataLab TAP](https://datalab.noirlab.edu/tap) for DESI DR10
+photometry (`ls_dr10.tractor`) and photo-z (`ls_dr10.photo_z`) for each tile.
+Photo-z is fetched in batches by `ls_id`.
+Saves `data/catalogs_desi/<SBID>_desi_dr10_catalog.csv` and
+`data/catalogs_desi/<SBID>_desi_dr10_z_catalog.csv`.
+No authentication required — NOIRLab DataLab is publicly accessible.
 
 ---
 

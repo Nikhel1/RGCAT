@@ -38,6 +38,9 @@ PyYAML==6.0.2
 # See casda/README.md for build instructions.
 MontagePy==1.2.3
 
+# Virtual Observatory TAP client (WISE/DESI catalog downloads)
+pyvo>=1.4
+
 # Splinecalibration extras
 # (no additional deps beyond numpy/scipy)
 
