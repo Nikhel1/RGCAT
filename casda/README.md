@@ -358,12 +358,4 @@ If you use these scripts, please cite:
   eid     = {e027},
   doi     = {10.1017/pasa.2024.25},
 }
-
-@ARTICLE{2023PASA...40...64G,
-  author  = {{Gupta}, Nikhel and others},
-  title   = "{Radio Galaxy Zoo EMU: Towards a Semantic Radio Galaxy Morphology Taxonomy}",
-  journal = {\pasa},
-  year    = 2023,
-  doi     = {10.1017/pasa.2023.64},
-}
 ```
