@@ -1,14 +1,15 @@
 # RG-CAT pipeline dependencies
 # Pin to minor versions; patch-level updates are generally safe.
+# Minimum version constraints are listed where strict compatibility is required.
 
 # Core astronomy stack
-astropy==6.1.0
-astroquery==0.4.7
+astropy==6.1.0           # requires >=5.0.4
+astroquery==0.4.7        # requires >=0.4.5
 reproject==0.13.1
 astropink==0.3.2         # island segmentation + minmax helpers
 
 # Image / data processing
-numpy==1.26.4
+numpy==1.26.4            # requires >=1.22.3
 scipy==1.13.1
 scikit-image==0.24.0
 Pillow==10.4.0
@@ -16,6 +17,9 @@ pandas==2.2.2
 matplotlib==3.9.1
 tqdm==4.66.5
 regions==0.9
+
+# HTTP / networking
+requests>=2.27.1         # minimum for DataLink download scripts
 
 # FITS / VOTable
 # (covered by astropy above)
@@ -28,6 +32,11 @@ shapely==2.0.5
 
 # PyYAML (pipeline config loading)
 PyYAML==6.0.2
+
+# Montage Python bindings (wise_mosaics.py)
+# Requires the Montage C library to be compiled first.
+# See casda/README.md for build instructions.
+MontagePy==1.2.3
 
 # Splinecalibration extras
 # (no additional deps beyond numpy/scipy)

@@ -47,6 +47,12 @@ RGCAT/
 │   ├── get_consol_cat.py
 │   ├── value_added_cat.py
 │   └── src/                   # COCO annotation helpers
+├── casda/                     # ← CASDA data download scripts (run before pipeline)
+│   ├── catalog_download_casda.py      # download selavy component catalogues
+│   ├── radio_image_download_casda.py  # download EMU FITS tiles
+│   ├── wise_mosaics.py                # generate unWISE W1 mosaics
+│   ├── wise_mosaics.sh                # shell wrapper (auto-retry)
+│   └── README.md                      # installation + usage for casda scripts
 ├── galdino/                   # Gal-DINO detection framework
 │   ├── main.py
 │   ├── engine.py
@@ -107,6 +113,57 @@ outputs/
 > `data/all_SBs/<SBid>/` is deleted automatically in the background by
 > `catalog_script.py` once all stages for that tile complete successfully.
 > Failed tiles are left on disk to allow inspection and re-run.
+
+---
+
+## CASDA data download
+
+Before running the pipeline you need three data products per EMU tile:
+the radio FITS image, the selavy component catalogue, and the unWISE W1 mosaic.
+The scripts in `casda/` handle all three.  Run them from the **repo root** in
+the order below.
+
+> Full installation and usage details are in [`casda/README.md`](casda/README.md).
+
+### 1. Download selavy catalogues
+
+```bash
+python casda/catalog_download_casda.py
+```
+
+Queries CASDA TAP for all `selavy-image.i.EMU*components.xml` files and
+converts them to CSV in `data/catalogs/`.  Already-downloaded SBIDs are
+skipped.  Tiles under embargo are logged as `SKIP (embargoed)`.
+
+### 2. Download EMU radio tiles
+
+```bash
+python casda/radio_image_download_casda.py
+```
+
+Downloads `image.i.EMU_*.cont.taylor.0.restored.conv.fits` files to
+`data/images/`.  Supports resume on partial downloads.  Embargoed tiles are
+skipped with a clear message.
+
+### 3. Generate WISE mosaics
+
+Requires the **Montage** C library and **MontagePy**.  See
+[`casda/README.md — Montage Installation`](casda/README.md#montage-installation)
+for build instructions including the patches needed for gcc 10 / Linux.
+
+```bash
+bash casda/wise_mosaics.sh
+```
+
+Generates `data/images_wise/<stem>_wise_mosaic.fits` for each tile in
+`data/images/`.  The shell wrapper auto-retries on failure and cleans up
+scratch directories between attempts.  Tiles listed under `skip.bad_tiles` in
+`config/pipeline.yaml` are skipped automatically.
+
+### Authentication
+
+All three scripts prompt for OPAL (CASDA) credentials once per run.
+Create an account at <https://opal.atnf.csiro.au/> if you do not have one.
 
 ---
 

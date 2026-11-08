@@ -1,8 +1,18 @@
 #!/usr/bin/env python
 # coding: utf-8
+"""
+Download EMU radio continuum FITS tiles from CASDA.
+
+CASDA files:  image.i.EMU_*.SB<SBID>.cont.taylor.0.restored.conv.fits
+Local output: ../data/images/<filename>
+
+Already-present files are skipped.  Uses DataLink direct download (no async
+staging job) so it works for both public and project-accessible tiles.
+"""
 
 import fnmatch
 import getpass
+import io
 import os
 import warnings
 from pathlib import Path
@@ -10,21 +20,24 @@ from urllib.parse import urlparse, unquote
 
 import numpy as np
 import requests
+from astropy.io.votable import parse as parse_votable
 from astropy.io.votable.exceptions import W50
-from astroquery.casda import Casda
 from astroquery.utils.tap.core import TapPlus
 
-# Suppress harmless VOTable unit warnings from CASDA's staging responses
+# Suppress harmless VOTable unit warnings
 warnings.filterwarnings("ignore", category=W50)
 
 IMAGE_DIR = Path("../data/images")
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 PATTERN = "image.i.EMU*taylor.0.restored.conv.fits"
-BATCH_SIZE = 5  # tiles staged/downloaded per request
 
 casdatap = TapPlus(url="https://casda.csiro.au/casda_vo_tools/tap")
 
+
+# ---------------------------------------------------------------------------
+# CASDA query
+# ---------------------------------------------------------------------------
 
 def list_casda_tiles():
     """Return an astropy Table of all CASDA images matching PATTERN."""
@@ -51,121 +64,189 @@ def is_downloaded(filename):
     return path.exists() and path.stat().st_size > 0
 
 
-def download_url(url, savedir):
-    """
-    Download a single pre-signed URL to savedir.
+# ---------------------------------------------------------------------------
+# DataLink resolution
+# ---------------------------------------------------------------------------
 
-    Returns the local filepath on success, raises on error.
-    Pre-signed S3 URLs are self-authenticating; no auth header needed.
-    Supports resuming partial downloads via HTTP Range requests.
+def resolve_datalink(access_url, auth):
     """
-    parsed = urlparse(url)
-    filename = unquote(os.path.basename(parsed.path))
-    local_path = Path(savedir) / filename
+    Resolve a CASDA DataLink URL to the direct file download URL.
 
-    # Determine how many bytes we already have (partial download resume)
-    existing = local_path.stat().st_size if local_path.exists() else 0
+    Returns (url, error_message):
+      - url is the direct download URL, or None on failure
+      - error_message is set if CASDA denied access or no URL was found
+    """
+    resp = requests.get(access_url, auth=auth, timeout=60)
+    resp.raise_for_status()
+
+    vot = parse_votable(io.BytesIO(resp.content), verify="warn")
+    for resource in vot.resources:
+        if resource.type == "results":
+            table = resource.tables[0].array
+
+            # Check for an error row first
+            for row in table:
+                sem = row["semantics"]
+                if isinstance(sem, bytes):
+                    sem = sem.decode()
+                if sem.strip() == "#error":
+                    err = row["error_message"]
+                    if isinstance(err, bytes):
+                        err = err.decode()
+                    return None, err.strip()
+
+            # Prefer the '#this' semantic row (primary file)
+            for row in table:
+                sem = row["semantics"]
+                if isinstance(sem, bytes):
+                    sem = sem.decode()
+                url = row["access_url"]
+                if isinstance(url, bytes):
+                    url = url.decode()
+                if sem.strip() == "#this" and url.strip():
+                    return url.strip(), None
+
+            # Fallback: any row with a non-empty access_url
+            for row in table:
+                url = row["access_url"]
+                if isinstance(url, bytes):
+                    url = url.decode()
+                if url.strip():
+                    return url.strip(), None
+
+    return None, "No download URL found in DataLink response"
+
+
+# ---------------------------------------------------------------------------
+# Download
+# ---------------------------------------------------------------------------
+
+def download_url(url, dest_path):
+    """
+    Download url to dest_path with resume support.
+    Returns dest_path on success, raises on error.
+    """
+    existing = dest_path.stat().st_size if dest_path.exists() else 0
     headers = {"Range": f"bytes={existing}-"} if existing > 0 else {}
 
     with requests.get(url, headers=headers, stream=True, timeout=300) as resp:
-        # 206 = partial content (resume), 200 = full file
         if resp.status_code == 416:
-            # Range not satisfiable — file already complete
-            return str(local_path)
+            return dest_path  # already complete
         resp.raise_for_status()
 
         mode = "ab" if existing > 0 and resp.status_code == 206 else "wb"
         total = int(resp.headers.get("content-length", 0)) + (existing if mode == "ab" else 0)
-
         downloaded = existing
-        with open(local_path, mode) as f:
-            for chunk in resp.iter_content(chunk_size=1 << 20):  # 1 MB chunks
+
+        with open(dest_path, mode) as f:
+            for chunk in resp.iter_content(chunk_size=1 << 20):
                 f.write(chunk)
                 downloaded += len(chunk)
                 if total:
                     pct = downloaded / total * 100
-                    print(f"\r  {filename}: {downloaded / 1e6:.1f}/{total / 1e6:.1f} MB "
+                    print(f"\r  {dest_path.name}: {downloaded/1e6:.1f}/{total/1e6:.1f} MB "
                           f"({pct:.1f}%)", end="", flush=True)
-        print()  # newline after progress
+        print()
 
-    return str(local_path)
+    return dest_path
 
+
+# ---------------------------------------------------------------------------
+# Main download loop
+# ---------------------------------------------------------------------------
 
 def download_tiles(tiles):
-    """Prompt for CASDA (OPAL) credentials, then stage and download .fits files only."""
+    """
+    Resolve DataLink URLs and download FITS tiles directly.
+
+    For each tile the DataLink endpoint is queried with OPAL credentials to
+    obtain a pre-signed direct download URL.  No async staging job is needed.
+    """
     username = input("CASDA (OPAL) username: ").strip()
     password = getpass.getpass("CASDA (OPAL) password: ")
+    auth = (username, password)
 
-    casda = Casda()
-    # Newer astroquery dropped the `password` kwarg and uses keyring, which is
-    # unavailable on headless HPC nodes.  Bypass login() entirely and inject
-    # credentials directly — replicating exactly what a successful _login() does.
-    casda.USERNAME = username
-    casda._auth = (username, password)
-    casda._authenticated = True
+    # Verify credentials before starting
+    login_resp = requests.get(
+        "https://data.csiro.au/casda_vo_proxy/vo/tap/availability",
+        auth=auth, timeout=30
+    )
+    if login_resp.status_code != 200:
+        raise RuntimeError(
+            f"CASDA authentication failed (HTTP {login_resp.status_code}). "
+            "Check your OPAL username/password at https://opal.atnf.csiro.au/"
+        )
+    print("Authentication successful.")
 
-    failed_tiles = []
+    failed = []
+    denied = []
 
-    for start in range(0, len(tiles), BATCH_SIZE):
-        batch = tiles[start:start + BATCH_SIZE]
-        batch_nums = f"{start + 1}-{start + len(batch)}"
+    for i, row in enumerate(tiles, start=1):
+        filename = str(row["filename"])
 
-        # Skip tiles already on disk (handles re-runs after a mid-batch crash)
-        batch_missing_mask = np.array([
-            not is_downloaded(str(fn)) for fn in batch["filename"]
-        ])
-        if not batch_missing_mask.any():
-            print(f"\nBatch {batch_nums}: all already downloaded, skipping.")
+        if is_downloaded(filename):
+            print(f"[{i}/{len(tiles)}] {filename}: already downloaded, skipping.")
             continue
 
-        print(f"\nStaging tiles {batch_nums} of {len(tiles)}...")
+        access_url = str(row["access_url"])
+        local_path = IMAGE_DIR / filename
 
+        print(f"[{i}/{len(tiles)}] {filename}: resolving DataLink...", end=" ", flush=True)
         try:
-            url_list = casda.stage_data(batch[batch_missing_mask])
+            dl_url, dl_err = resolve_datalink(access_url, auth)
         except Exception as e:
-            print(f"  ERROR staging batch {batch_nums}: {e}")
-            failed_tiles.extend(list(batch["filename"][batch_missing_mask]))
+            print(f"\n  ERROR resolving DataLink: {e}")
+            failed.append(filename)
             continue
 
-        # Keep only .fits URLs (staging also returns .checksum files)
-        url_list = [url for url in url_list if url.split("?")[0].endswith(".fits")]
-
-        if not url_list:
-            print(f"  WARNING: no .fits URLs returned for batch {batch_nums}, skipping.")
-            failed_tiles.extend(list(batch["filename"][batch_missing_mask]))
+        if not dl_url:
+            if "permission" in (dl_err or "").lower() or "access" in (dl_err or "").lower():
+                print(f"\n  SKIP (embargoed): {dl_err}")
+                denied.append(filename)
+            else:
+                print(f"\n  SKIP: {dl_err}")
+                failed.append(filename)
             continue
 
-        # Download each file individually so one 403/timeout doesn't kill the batch
-        for url in url_list:
-            parsed = urlparse(url)
-            filename = unquote(os.path.basename(parsed.path))
-            local_path = IMAGE_DIR / filename
-            try:
-                print(f"  Downloading {filename}...")
-                download_url(url, str(IMAGE_DIR))
-            except requests.exceptions.HTTPError as e:
-                status = e.response.status_code if e.response is not None else "?"
-                if status == 403:
-                    print(f"  SKIP {filename}: 403 Forbidden "
-                          f"(Pawsey S3 InvalidAccessKeyId — CASDA staged this URL with a "
-                          f"revoked/invalid S3 key; report to CASDA support)")
-                else:
-                    print(f"  ERROR {filename}: HTTP {status} — {e}")
-                # Remove zero-byte partial file if created
-                if local_path.exists() and local_path.stat().st_size == 0:
-                    local_path.unlink()
-                failed_tiles.append(filename)
-            except Exception as e:
-                print(f"  ERROR {filename}: {e}")
-                if local_path.exists() and local_path.stat().st_size == 0:
-                    local_path.unlink()
-                failed_tiles.append(filename)
+        print("downloading...")
+        try:
+            download_url(dl_url, local_path)
+            print(f"  OK → {filename}")
 
-    if failed_tiles:
-        print(f"\n{len(failed_tiles)} tile(s) failed (re-run to retry):")
-        for fn in failed_tiles:
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "?"
+            if status == 403:
+                # Pawsey S3 InvalidAccessKeyId — the pre-signed URL CASDA gave us
+                # has an expired/invalid S3 key.  This is a CASDA-side issue;
+                # retrying will get a fresh URL from DataLink.
+                print(f"  ERROR {filename}: 403 Forbidden "
+                      f"(Pawsey S3 bad key — re-run to get a fresh URL from CASDA)")
+            else:
+                print(f"  ERROR {filename}: HTTP {status} — {e}")
+            if local_path.exists() and local_path.stat().st_size == 0:
+                local_path.unlink()
+            failed.append(filename)
+
+        except Exception as e:
+            print(f"  ERROR {filename}: {e}")
+            if local_path.exists() and local_path.stat().st_size == 0:
+                local_path.unlink()
+            failed.append(filename)
+
+    if denied:
+        print(f"\n{len(denied)} tile(s) skipped (embargoed / no permission — re-run won't help):")
+        for fn in denied:
             print(f"  {fn}")
 
+    if failed:
+        print(f"\n{len(failed)} tile(s) failed with errors (re-run to retry):")
+        for fn in failed:
+            print(f"  {fn}")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def main():
     print("Querying CASDA for tiles matching", PATTERN)
@@ -183,19 +264,15 @@ def main():
         print("Nothing to download, all tiles are already local.")
         return
 
-    # Optional: estimated total size (access_estsize is in kB)
     if "access_estsize" in tiles.colnames:
         total_gb = np.sum(tiles["access_estsize"][missing_mask]) / 1e6
         print(f"Estimated download size: {total_gb:.1f} GB")
 
     download_tiles(tiles[missing_mask])
 
-    # Final check
     still_missing = [fn for fn in filenames if not is_downloaded(fn)]
     if still_missing:
-        print("\nThese tiles are still missing:")
-        for fn in still_missing:
-            print("  ", fn)
+        print(f"\n{len(still_missing)} tile(s) still missing after run.")
     else:
         print("\nAll tiles are now in", IMAGE_DIR)
 

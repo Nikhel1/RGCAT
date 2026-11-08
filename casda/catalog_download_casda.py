@@ -11,6 +11,7 @@ Already-present SBIDs are skipped.  XML files are removed after successful conve
 
 import fnmatch
 import getpass
+import io
 import os
 import re
 import tempfile
@@ -22,7 +23,6 @@ import numpy as np
 import requests
 from astropy.io.votable import parse as parse_votable
 from astropy.io.votable.exceptions import W50
-from astroquery.casda import Casda
 from astroquery.utils.tap.core import TapPlus
 
 # Suppress harmless VOTable unit warnings from CASDA staging responses
@@ -32,7 +32,6 @@ CATALOG_DIR = Path("../data/catalogs")
 CATALOG_DIR.mkdir(parents=True, exist_ok=True)
 
 CAT_PATTERN = "selavy-image.i.EMU*taylor.0.restored.conv.components.xml"
-BATCH_SIZE = 5
 
 casdatap = TapPlus(url="https://casda.csiro.au/casda_vo_tools/tap")
 
@@ -128,95 +127,153 @@ def list_casda_catalogs():
 # Download + convert
 # ---------------------------------------------------------------------------
 
+def resolve_datalink(access_url, auth):
+    """
+    Resolve a CASDA DataLink URL to the direct file download URL.
+
+    The DataLink VOTable contains a results table with rows.  For public (or
+    accessible) files one of the rows has:
+      - semantics == '#this'  (the primary file)
+      - access_url            (the direct S3 / HTTP download URL)
+
+    Falls back to the first row that has a non-empty access_url if '#this'
+    is not present.
+
+    Returns (url, error_message) where url is the download URL or None,
+    and error_message is the CASDA error string if access was denied.
+    """
+    resp = requests.get(access_url, auth=auth, timeout=60)
+    resp.raise_for_status()
+
+    vot = parse_votable(io.BytesIO(resp.content), verify="warn")
+    for resource in vot.resources:
+        if resource.type == "results":
+            table = resource.tables[0].array
+            # Check for an error row first
+            for row in table:
+                sem = row["semantics"]
+                if isinstance(sem, bytes):
+                    sem = sem.decode()
+                if sem.strip() == "#error":
+                    err = row["error_message"]
+                    if isinstance(err, bytes):
+                        err = err.decode()
+                    return None, err.strip()
+
+            # Prefer the '#this' semantic row (primary file)
+            for row in table:
+                sem = row["semantics"]
+                if isinstance(sem, bytes):
+                    sem = sem.decode()
+                url = row["access_url"]
+                if isinstance(url, bytes):
+                    url = url.decode()
+                if sem.strip() == "#this" and url.strip():
+                    return url.strip(), None
+
+            # Fallback: any row with a non-empty access_url
+            for row in table:
+                url = row["access_url"]
+                if isinstance(url, bytes):
+                    url = url.decode()
+                if url.strip():
+                    return url.strip(), None
+
+    return None, "No download URL found in DataLink response"
+
+
 def download_catalogs(tiles):
-    """Prompt for CASDA credentials, stage and download XML catalogs, convert to CSV."""
+    """
+    Resolve DataLink URLs and download XML catalogs directly, then convert to CSV.
+
+    CASDA public catalogues are accessible via their DataLink access_url with
+    OPAL credentials.  The DataLink response is a VOTable that contains the
+    direct S3 download URL — no async staging job is needed.
+    """
     username = input("CASDA (OPAL) username: ").strip()
     password = getpass.getpass("CASDA (OPAL) password: ")
+    auth = (username, password)
 
-    casda = Casda()
-    # Newer astroquery removed `password` kwarg; inject credentials directly.
-    casda.USERNAME = username
-    casda._auth = (username, password)
-    casda._authenticated = True
+    # Verify credentials before starting
+    login_resp = requests.get(
+        "https://data.csiro.au/casda_vo_proxy/vo/tap/availability",
+        auth=auth, timeout=30
+    )
+    if login_resp.status_code != 200:
+        raise RuntimeError(
+            f"CASDA authentication failed (HTTP {login_resp.status_code}). "
+            "Check your OPAL username/password at https://opal.atnf.csiro.au/"
+        )
+    print("Authentication successful.")
 
     failed = []
+    denied = []
 
-    for start in range(0, len(tiles), BATCH_SIZE):
-        batch = tiles[start:start + BATCH_SIZE]
-        batch_nums = f"{start + 1}-{start + len(batch)}"
-
-        # Within-batch skip for already-converted SBIDs
-        batch_sbids = [sbid_from_filename(str(fn)) for fn in batch["filename"]]
-        missing_mask = np.array([
-            sbid is not None and not is_downloaded(sbid)
-            for sbid in batch_sbids
-        ])
-
-        if not missing_mask.any():
-            print(f"\nBatch {batch_nums}: all already downloaded, skipping.")
+    for i, row in enumerate(tiles, start=1):
+        sbid = sbid_from_filename(str(row["filename"]))
+        if sbid is None:
+            print(f"  WARNING [{i}/{len(tiles)}]: could not extract SBID from "
+                  f"{row['filename']}, skipping.")
             continue
 
-        print(f"\nStaging catalogs {batch_nums} of {len(tiles)}...")
+        if is_downloaded(sbid):
+            print(f"[{i}/{len(tiles)}] SBID {sbid}: already downloaded, skipping.")
+            continue
+
+        access_url = str(row["access_url"])
+        csv_out = csv_path_for_sbid(sbid)
+        tmp_xml = Path(tempfile.mktemp(suffix=".xml", dir=CATALOG_DIR))
+
+        print(f"[{i}/{len(tiles)}] SBID {sbid}: resolving DataLink...", end=" ", flush=True)
+        try:
+            dl_url, dl_err = resolve_datalink(access_url, auth)
+        except Exception as e:
+            print(f"\n  ERROR resolving DataLink for SBID {sbid}: {e}")
+            failed.append(sbid)
+            continue
+
+        if not dl_url:
+            if "permission" in (dl_err or "").lower() or "access" in (dl_err or "").lower():
+                print(f"\n  SKIP (embargoed): {dl_err}")
+                denied.append(sbid)
+            else:
+                print(f"\n  SKIP: {dl_err}")
+                failed.append(sbid)
+            continue
+
+        xml_filename = unquote(os.path.basename(urlparse(dl_url).path))
+        print(f"downloading {xml_filename}...")
 
         try:
-            url_list = casda.stage_data(batch[missing_mask])
+            download_url(dl_url, tmp_xml)
+
+            print(f"  Converting to {csv_out.name}...")
+            votable_to_csv(str(tmp_xml), str(csv_out))
+            tmp_xml.unlink()
+            print(f"  OK → {csv_out.name}")
+
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "?"
+            print(f"  ERROR SBID {sbid}: HTTP {status} — {e}")
+            if tmp_xml.exists():
+                tmp_xml.unlink()
+            failed.append(sbid)
+
         except Exception as e:
-            print(f"  ERROR staging batch {batch_nums}: {e}")
-            failed.extend([batch_sbids[i] for i, m in enumerate(missing_mask) if m])
-            continue
+            print(f"  ERROR SBID {sbid}: {e}")
+            if tmp_xml.exists():
+                tmp_xml.unlink()
+            if csv_out.exists() and csv_out.stat().st_size == 0:
+                csv_out.unlink()
+            failed.append(sbid)
 
-        # Keep only .xml URLs
-        url_list = [u for u in url_list if u.split("?")[0].endswith(".xml")]
-
-        if not url_list:
-            print(f"  WARNING: no .xml URLs returned for batch {batch_nums}, skipping.")
-            failed.extend([batch_sbids[i] for i, m in enumerate(missing_mask) if m])
-            continue
-
-        for url in url_list:
-            parsed = urlparse(url)
-            xml_filename = unquote(os.path.basename(parsed.path))
-            sbid = sbid_from_filename(xml_filename)
-
-            if sbid is None:
-                print(f"  WARNING: could not extract SBID from {xml_filename}, skipping.")
-                continue
-
-            csv_out = csv_path_for_sbid(sbid)
-
-            # Use a temp file so a crash mid-download doesn't leave a partial XML
-            tmp_xml = Path(tempfile.mktemp(suffix=".xml", dir=CATALOG_DIR))
-
-            try:
-                print(f"  Downloading {xml_filename} (SBID {sbid})...")
-                download_url(url, tmp_xml)
-
-                print(f"  Converting to {csv_out.name}...")
-                votable_to_csv(str(tmp_xml), str(csv_out))
-                tmp_xml.unlink()  # remove XML after successful conversion
-                print(f"  OK → {csv_out.name}")
-
-            except requests.exceptions.HTTPError as e:
-                status = e.response.status_code if e.response is not None else "?"
-                if status == 403:
-                    print(f"  SKIP SBID {sbid}: 403 Forbidden "
-                          f"(Pawsey S3 InvalidAccessKeyId — report to CASDA support)")
-                else:
-                    print(f"  ERROR SBID {sbid}: HTTP {status} — {e}")
-                if tmp_xml.exists():
-                    tmp_xml.unlink()
-                failed.append(sbid)
-
-            except Exception as e:
-                print(f"  ERROR SBID {sbid}: {e}")
-                if tmp_xml.exists():
-                    tmp_xml.unlink()
-                if csv_out.exists() and csv_out.stat().st_size == 0:
-                    csv_out.unlink()
-                failed.append(sbid)
+    if denied:
+        print(f"\n{len(denied)} SBID(s) skipped (embargoed / no permission — re-run won't help):")
+        for sbid in denied:
+            print(f"  SBID {sbid}")
 
     if failed:
-        print(f"\n{len(failed)} SBID(s) failed (re-run to retry):")
+        print(f"\n{len(failed)} SBID(s) failed with errors (re-run to retry):")
         for sbid in failed:
             print(f"  SBID {sbid}")
 

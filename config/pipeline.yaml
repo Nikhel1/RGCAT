@@ -69,6 +69,24 @@ skip:
     - "50428"   # known issue with value-added catalog generation
 
 # ---------------------------------------------------------------------------
+# WISE Mosaics  (used by casda/wise_mosaics.py)
+# ---------------------------------------------------------------------------
+wise:
+  # unWISE tile index (allwise catalogue of coadd footprints)
+  tiles_url: "http://unwise.me/data/allwise/unwise-coadds/fulldepth/tiles.fits"
+
+  # Base URL for unWISE W1 neo3 full-depth coadds
+  images_base_url: "http://unwise.me/data/neo3/unwise-coadds/fulldepth"
+
+  # Maximum number of unWISE tiles per EMU footprint before skipping
+  # (very large values indicate a WCS problem with the radio tile)
+  max_tiles_per_footprint: 75
+
+  # Padding added to each side of the EMU footprint when querying unWISE tiles
+  # (degrees, in each axis direction, scaled by cos(dec) for RA)
+  footprint_pad_deg: 1.5
+
+# ---------------------------------------------------------------------------
 # Processing Parameters
 # ---------------------------------------------------------------------------
 processing:
