@@ -59,6 +59,7 @@ RGCAT/
 │   ├── value_added_cat.py
 │   └── src/                   # COCO annotation helpers
 ├── casda/                     # ← CASDA data download scripts (run before pipeline)
+│   ├── run_all.py                             # orchestrator — run this first
 │   ├── catalog_download_casda.py              # download selavy component catalogues
 │   ├── radio_image_download_casda.py          # download EMU FITS tiles
 │   ├── wise_mosaics.py                        # generate unWISE W1 mosaics
@@ -133,10 +134,29 @@ outputs/
 
 Before running the pipeline you need three data products per EMU tile:
 the radio FITS image, the selavy component catalogue, and the unWISE W1 mosaic.
-The scripts in `casda/` handle all three.  Run them from the **repo root** in
-the order below.
+The scripts in `casda/` handle all five download steps.  Run them from the
+**repo root** using the orchestrator:
+
+```bash
+python casda/run_all.py
+```
+
+This prompts for OPAL credentials once, then runs all five steps in sequence,
+skipping already-completed steps on re-run.  See the options below for
+selective execution.
 
 > Full installation and usage details are in [`casda/README.md`](casda/README.md).
+
+### Orchestrator options
+
+```bash
+python casda/run_all.py --steps 4 5      # only external catalog steps (no auth)
+python casda/run_all.py --from-step 3    # resume from WISE mosaics
+python casda/run_all.py --force          # re-run everything
+python casda/run_all.py --dry-run        # preview without executing
+```
+
+### Running steps individually
 
 ### 1. Download selavy catalogues
 

@@ -190,8 +190,14 @@ def download_catalogs(tiles):
     OPAL credentials.  The DataLink response is a VOTable that contains the
     direct S3 download URL — no async staging job is needed.
     """
-    username = input("CASDA (OPAL) username: ").strip()
-    password = getpass.getpass("CASDA (OPAL) password: ")
+    username = (
+        os.environ.get("CASDA_USER")
+        or input("CASDA (OPAL) username: ").strip()
+    )
+    password = (
+        os.environ.get("CASDA_PASS")
+        or getpass.getpass("CASDA (OPAL) password: ")
+    )
     auth = (username, password)
 
     # Verify credentials before starting

@@ -11,12 +11,71 @@ Run all scripts from the **repo root** (one level up from this folder).
 
 | Script | Purpose |
 |---|---|
+| `run_all.py` | **Orchestrator** — runs all five download steps in sequence |
 | `catalog_download_casda.py` | Download selavy component catalogues from CASDA (XML → CSV) |
 | `radio_image_download_casda.py` | Download EMU FITS continuum tiles from CASDA |
 | `wise_mosaics.py` | Generate unWISE W1 mosaics for each EMU tile |
 | `wise_mosaics.sh` | Shell wrapper for `wise_mosaics.py` (auto-retry on failure) |
 | `download_catwise_allwise_catalogs.py` | Download CatWISE-2020 and AllWISE photometry from IRSA TAP |
 | `download_desi_catalogs.py` | Download DESI DR10 photometry and photo-z from NOIRLab DataLab TAP |
+
+---
+
+## run_all.py — orchestrator
+
+Runs all five download scripts in the correct order with a single command.
+Credentials are prompted once and passed to child processes automatically.
+
+```bash
+python casda/run_all.py
+```
+
+### Features
+
+- **Single credential prompt** — asks for OPAL username/password once and
+  passes them to steps 1 and 2 via `CASDA_USER` / `CASDA_PASS` environment
+  variables.  If these are already set in your shell they are used directly
+  with no prompt.
+- **Resumable** — a JSON state file (`logs/casda/state.json`) records which
+  steps completed.  Re-running skips completed steps automatically.
+- **Per-step logs** — each step writes a timestamped log to
+  `logs/casda/<step>_<timestamp>.log` while also printing to the terminal.
+- **Selective execution** — run only specific steps or resume from a given
+  step.
+- **Dry-run mode** — preview what would be executed without running anything.
+
+### Options
+
+| Flag | Description |
+|---|---|
+| `--config PATH` | pipeline.yaml path (default: `config/pipeline.yaml`) |
+| `--steps N [N ...]` | Run only these step numbers, e.g. `--steps 4 5` |
+| `--from-step N` | Skip steps before N, e.g. `--from-step 3` |
+| `--force` | Re-run steps even if already marked complete |
+| `--no-credentials` | Skip credential prompt (env vars must already be set) |
+| `--dry-run` | Print commands without executing them |
+
+### Examples
+
+```bash
+# Full run (all 5 steps)
+python casda/run_all.py
+
+# Resume after a failure — already-completed steps are skipped
+python casda/run_all.py
+
+# Run only the external catalog steps (no CASDA auth needed)
+python casda/run_all.py --steps 4 5
+
+# Start from WISE mosaics onwards
+python casda/run_all.py --from-step 3
+
+# Re-download everything from scratch
+python casda/run_all.py --force
+
+# Preview without executing
+python casda/run_all.py --dry-run
+```
 
 ---
 

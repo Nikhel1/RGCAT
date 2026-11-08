@@ -162,8 +162,14 @@ def download_tiles(tiles):
     For each tile the DataLink endpoint is queried with OPAL credentials to
     obtain a pre-signed direct download URL.  No async staging job is needed.
     """
-    username = input("CASDA (OPAL) username: ").strip()
-    password = getpass.getpass("CASDA (OPAL) password: ")
+    username = (
+        os.environ.get("CASDA_USER")
+        or input("CASDA (OPAL) username: ").strip()
+    )
+    password = (
+        os.environ.get("CASDA_PASS")
+        or getpass.getpass("CASDA (OPAL) password: ")
+    )
     auth = (username, password)
 
     # Verify credentials before starting
